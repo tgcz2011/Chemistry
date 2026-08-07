@@ -1,0 +1,32 @@
+name = "chem-check"
+main = "src/worker.js"
+compatibility_date = "2025-04-01"
+
+# 保留 workers.dev 默认域名作为备用入口（与自定义域名并存）
+workers_dev = true
+
+# 用 Worker 的静态资源能力同时托管前端站点 + API
+# 这样一次部署即可同时获得“Pages 静态站 + Worker API”
+assets = { directory = "public", binding = "ASSETS" }
+
+# 观测（可选）
+observability = { enabled = true }
+
+# 绑定自定义域名（Custom Domain）
+# 前提：父域 zztool.dpdns.org 已作为 zone 添加到你的 Cloudflare 账号且处于 active 状态。
+# 添加后 Cloudflare 会自动创建 DNS 记录并签发 SSL 证书，无需手动改 DNS。
+routes = [
+  { pattern = "chem-check.zztool.dpdns.org", custom_domain = true, zone_name = "zztool.dpdns.org" }
+]
+
+# Workers AI：用于未收录物质判定与反应产物补全（模型 @cf/qwen/qwen3-30b-a3b-fp8）
+# 注意：用内联表而非 [ai] 段，避免把后面的顶层键吞进 ai 表。
+ai = { binding = "AI" }
+
+# D1：缓存联网判定结果 + 上报限流（本项目独立新建的数据库）
+# 用 [[d1_databases]] 数组表写法，避免把后续键吞进上一段。
+[[d1_databases]]
+binding = "DB"
+database_name = "chem-check-cache"
+database_id = "8bbd002e-c105-4b9a-b46e-195dc100074f"
+migrations_dir = "migrations"

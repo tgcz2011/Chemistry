@@ -1,0 +1,275 @@
+/* ============================================================
+   化学式速查 · Chemical Assay Sheet
+   设计：检验报告单 / 安全数据表（编辑·印刷风）
+   去 AI 感要点：暖纸色 + 墨色、衬线大标题 + 技术等宽、
+   发丝线 + 留白（非圆角卡片+阴影）、判定章戳、颗粒噪点、
+   语义化配色（非装饰渐变）、克制的编排动效
+   ============================================================ */
+:root{
+  --paper:#F4F0E5;
+  --paper-2:#FBF8F0;
+  --paper-inset:#EFE9DA;
+  --ink:#221F18;
+  --ink-2:#5C5445;
+  --ink-3:#8A8071;
+  --line:#D7CFBC;
+  --line-strong:#B9AF97;
+  --accent:#B2341F;      /* 朱砂红（报告印章/试剂） */
+  --accent-deep:#7E2415;
+  --indigo:#2C3A63;      /* 结构色/链接 */
+  /* 判定四态（语义，印刷感的沉稳色） */
+  --yes:#2F7D50;
+  --conditional:#A27718;
+  --unstable:#C05A1D;
+  --no:#AE3320;
+  --radius:4px;          /* 低圆角，偏文档感 */
+  --serif:"Fraunces","Songti SC",Georgia,serif;
+  --sans:"IBM Plex Sans","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --maxw:820px;
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); line-height:1.66; min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* —— 颗粒噪点（去“塑料感”） —— */
+.grain{
+  position:fixed; inset:0; z-index:60; pointer-events:none; opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply;
+}
+/* —— 顶部发丝线 —— */
+.toprule{ position:fixed; top:0; left:0; right:0; height:4px; z-index:50;
+  background:var(--ink); }
+.toprule::after{ content:""; display:block; height:1px; margin-top:4px; background:var(--accent); }
+
+.wrap{ position:relative; z-index:1; max-width:var(--maxw); margin:0 auto; padding:34px 20px 70px; }
+
+/* —— 刊头 —— */
+.masthead{ display:flex; align-items:baseline; justify-content:space-between; }
+.mast-left{ display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.doc-no{ font-family:var(--mono); font-size:11px; letter-spacing:1.5px; color:var(--paper);
+  background:var(--ink); padding:3px 7px; border-radius:2px; }
+.brand{ font-family:var(--serif); font-weight:700; font-size:22px; letter-spacing:.5px; }
+.brand-en{ font-family:var(--mono); font-size:11px; letter-spacing:2.5px; color:var(--ink-3); }
+.mast-link{ font-family:var(--mono); font-size:12px; color:var(--indigo); text-decoration:none;
+  border-bottom:1px solid var(--indigo); padding-bottom:1px; }
+.mast-link:hover{ color:var(--accent); border-color:var(--accent); }
+.rule{ border:none; border-top:1px solid var(--line-strong); margin:16px 0 0; }
+.rule{ box-shadow:0 1px 0 var(--paper-2); }
+
+/* —— Hero —— */
+.hero{ margin:34px 0 8px; }
+.eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:2.5px; text-transform:uppercase;
+  color:var(--accent); margin:0 0 14px; }
+.hero h1{
+  font-family:var(--serif); font-weight:600; letter-spacing:-.02em;
+  font-size:clamp(34px,7vw,58px); line-height:1.02; margin:0 0 16px;
+}
+.lede{ color:var(--ink-2); font-size:15px; max-width:62ch; margin:0; }
+.lede strong{ color:var(--ink); font-weight:600; }
+
+/* —— 模式切换（分段控件，发丝线） —— */
+.modes{ display:inline-flex; border:1px solid var(--line-strong); border-radius:var(--radius);
+  margin:26px 0 0; overflow:hidden; background:var(--paper-2); }
+.mode{
+  appearance:none; border:none; background:transparent; color:var(--ink-2);
+  font-family:var(--sans); font-size:14px; font-weight:500; padding:10px 20px; cursor:pointer;
+  transition:.15s; border-right:1px solid var(--line);
+}
+.mode:last-child{ border-right:none; }
+.mode.active{ background:var(--ink); color:var(--paper); }
+.mode:not(.active):hover{ background:var(--paper-inset); color:var(--ink); }
+
+/* —— 面板 —— */
+.panel{ margin-top:24px; }
+.hidden{ display:none; }
+.field-label{ display:block; font-family:var(--mono); font-size:11px; letter-spacing:2px;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 8px; }
+.field-row{ display:flex; gap:10px; }
+.cond-label{ margin-top:16px; }
+#formula,#eqinput,.cond{
+  flex:1; width:100%; background:var(--paper-2); border:1px solid var(--line-strong);
+  color:var(--ink); border-radius:var(--radius); padding:14px 16px;
+  font-family:var(--mono); font-size:17px; letter-spacing:.4px; outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.cond{ font-size:14px; padding:11px 14px; max-width:420px; }
+#formula::placeholder,#eqinput::placeholder,.cond::placeholder{ color:var(--ink-3); font-size:13px; letter-spacing:0; }
+#formula:focus,#eqinput:focus,.cond:focus{
+  border-color:var(--ink); box-shadow:3px 3px 0 var(--accent); }
+.btn{
+  background:var(--ink); color:var(--paper); border:1px solid var(--ink); border-radius:var(--radius);
+  padding:0 26px; font-size:15px; font-weight:600; font-family:var(--sans); cursor:pointer;
+  transition:.12s; box-shadow:3px 3px 0 var(--line-strong); white-space:nowrap;
+}
+.btn:hover{ background:var(--accent); border-color:var(--accent); box-shadow:3px 3px 0 var(--ink); transform:translate(-1px,-1px); }
+.btn:active{ transform:translate(1px,1px); box-shadow:1px 1px 0 var(--line-strong); }
+
+.preview{ min-height:26px; margin-top:10px; font-family:var(--mono); font-size:16px; color:var(--indigo); }
+
+.templates{ display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; }
+.tpl{
+  background:var(--paper-2); border:1px solid var(--line-strong); color:var(--ink-2);
+  border-radius:3px; padding:6px 10px; font-size:13px; cursor:pointer; transition:.12s;
+  font-family:var(--mono);
+}
+.tpl:hover{ border-color:var(--ink); color:var(--ink); box-shadow:2px 2px 0 var(--accent); }
+
+.examples{ margin-top:16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.ex-label{ font-family:var(--mono); font-size:11px; letter-spacing:2px; color:var(--ink-3); text-transform:uppercase; }
+.chip{
+  background:transparent; border:1px solid var(--line-strong); color:var(--ink-2);
+  border-radius:20px; padding:5px 12px; font-size:13px; cursor:pointer; transition:.12s;
+  font-family:var(--mono);
+}
+.chip:hover{ border-color:var(--accent); color:var(--accent); }
+
+/* ============================================================
+   检验报告卡（判定结果）
+   ============================================================ */
+.report{
+  margin-top:26px; background:var(--paper-2); border:1px solid var(--line-strong);
+  border-radius:var(--radius); box-shadow:5px 5px 0 rgba(34,31,24,.10);
+  animation:rise .3s cubic-bezier(.2,.7,.3,1);
+}
+@keyframes rise{ from{ opacity:0; transform:translateY(10px);} to{ opacity:1; transform:none;} }
+.report-head{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  padding:22px 22px 16px; border-bottom:1px solid var(--line);
+}
+.rep-formula{ font-family:var(--mono); font-size:28px; font-weight:600; letter-spacing:.5px; line-height:1; }
+.rep-name{ color:var(--ink-2); font-size:14px; margin-top:8px; }
+.rep-eq{ font-family:var(--mono); font-size:20px; font-weight:600; line-height:1.4; }
+.rep-sub{ font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:8px; }
+
+/* —— 判定章戳 —— */
+.stamp{
+  flex:none; font-family:var(--sans); font-weight:700; font-size:15px; letter-spacing:2px;
+  padding:8px 14px; border:3px solid currentColor; border-radius:6px;
+  transform:rotate(-7deg); position:relative; background:var(--paper);
+  box-shadow:inset 0 0 0 1px var(--paper), inset 0 0 0 3px currentColor;
+  animation:stamp .28s cubic-bezier(.34,1.4,.5,1);
+}
+@keyframes stamp{ from{ transform:rotate(-7deg) scale(1.6); opacity:0;} to{ transform:rotate(-7deg) scale(1); opacity:1;} }
+.stamp::after{ content:""; position:absolute; inset:2px; border:1px dashed currentColor; border-radius:3px; opacity:.5; }
+.stamp-yes{ color:var(--yes); }
+.stamp-conditional{ color:var(--conditional); }
+.stamp-unstable{ color:var(--unstable); }
+.stamp-no{ color:var(--no); }
+.stamp-type{ color:var(--indigo); transform:rotate(-4deg); }
+
+/* —— 元信息 —— */
+.meta{ display:flex; flex-wrap:wrap; gap:6px 26px; padding:14px 22px; border-bottom:1px solid var(--line);
+  font-size:13px; color:var(--ink-2); }
+.meta b{ color:var(--ink); font-weight:600; }
+.meta .el{ font-family:var(--mono); color:var(--indigo); }
+
+/* —— SDS 编号分区 —— */
+.sec{ padding:16px 22px; border-bottom:1px solid var(--line); }
+.sec:last-child{ border-bottom:none; }
+.sec h4{
+  margin:0 0 10px; font-family:var(--mono); font-size:11px; letter-spacing:2px; font-weight:600;
+  text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:8px;
+}
+.sec h4::before{ content:""; width:14px; height:1px; background:var(--accent); }
+
+.note-list{ margin:0; padding-left:18px; }
+.note-list li{ margin:6px 0; font-size:14px; color:var(--ink); }
+
+/* —— 危险标签（试剂瓶标签风） —— */
+.hazards{ display:flex; flex-wrap:wrap; gap:8px; }
+.haz{
+  font-family:var(--sans); font-size:12.5px; font-weight:600; letter-spacing:.5px;
+  padding:4px 10px; border:1.5px solid currentColor; border-left-width:5px; border-radius:2px;
+  background:var(--paper);
+}
+.haz-toxic{ color:var(--no); }
+.haz-corrosive{ color:var(--unstable); }
+.haz-explosive{ color:var(--accent); }
+.haz-oxidize{ color:var(--indigo); }
+.haz-unstable{ color:var(--conditional); }
+.haz-charged{ color:var(--ink-2); }
+
+.warn{
+  border-left:4px solid var(--unstable); background:var(--paper-inset);
+  padding:9px 13px; margin:8px 0; font-size:13.5px; color:var(--ink); border-radius:2px;
+}
+
+/* —— 相关物质 —— */
+.related{ display:flex; flex-wrap:wrap; gap:8px; }
+.rel{
+  background:var(--paper-2); border:1px solid var(--line-strong); border-radius:3px;
+  padding:6px 11px; font-family:var(--mono); cursor:pointer; font-size:13px; color:var(--ink);
+  transition:.12s;
+}
+.rel:hover{ border-color:var(--accent); color:var(--accent); box-shadow:2px 2px 0 var(--accent); }
+a.rel{ text-decoration:none; display:inline-block; }
+.rep-hint{ font-size:12px; color:var(--ink-3); margin-left:8px; font-family:var(--mono); }
+
+/* —— 错误 / 加载 —— */
+.err{ color:var(--no); font-size:15px; padding:16px 0; }
+.err b{ color:var(--ink); }
+.loading{
+  display:flex; align-items:center; gap:10px; color:var(--ink-2); font-size:14px;
+  padding:16px 0; font-family:var(--mono);
+}
+.loading::before{
+  content:""; width:14px; height:14px; border:2px solid var(--line-strong);
+  border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite;
+}
+@keyframes spin{ to{ transform:rotate(360deg);} }
+
+/* ============================================================
+   配平 / 计量
+   ============================================================ */
+.eqtable{ width:100%; border-collapse:collapse; font-size:14px; }
+.eqtable th{ text-align:left; font-family:var(--mono); font-size:11px; letter-spacing:1.5px;
+  color:var(--ink-3); text-transform:uppercase; padding:6px 8px; border-bottom:1px solid var(--line-strong); }
+.eqtable td{ padding:8px; border-bottom:1px solid var(--line); }
+.eqtable td.f{ font-family:var(--mono); font-weight:600; }
+.eqtable td.n{ color:var(--ink-2); font-size:13px; }
+.eqtable td.num{ font-family:var(--mono); }
+.sidetag{ font-family:var(--mono); font-size:11px; color:var(--paper); background:var(--indigo);
+  padding:2px 6px; border-radius:2px; margin-right:8px; }
+.sidetag.p{ background:var(--accent); }
+
+.calc{ margin-top:6px; }
+.calc-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.calc select,.calc input{
+  background:var(--paper-2); border:1px solid var(--line-strong); color:var(--ink);
+  border-radius:var(--radius); padding:9px 11px; font-family:var(--mono); font-size:14px; outline:none;
+}
+.calc select:focus,.calc input:focus{ border-color:var(--ink); }
+.calc .unit{ display:inline-flex; border:1px solid var(--line-strong); border-radius:3px; overflow:hidden; }
+.calc .unit button{ border:none; background:transparent; padding:9px 12px; font-family:var(--mono);
+  font-size:13px; color:var(--ink-2); cursor:pointer; }
+.calc .unit button.active{ background:var(--ink); color:var(--paper); }
+.calc-result{ margin-top:14px; }
+
+.note{ margin-top:34px; border-top:1px solid var(--line-strong); padding-top:18px; }
+.note h3{ margin:0 0 8px; font-family:var(--serif); font-size:17px; font-weight:600; }
+.note p{ margin:0; color:var(--ink-2); font-size:13.5px; }
+.note strong{ color:var(--ink); }
+
+.foot{ text-align:center; color:var(--ink-3); font-size:12px; margin-top:26px; font-family:var(--mono); }
+
+/* —— 响应式 —— */
+@media (max-width:560px){
+  .field-row{ flex-direction:column; }
+  .btn{ padding:13px; }
+  .rep-formula{ font-size:23px; }
+  .report-head{ flex-direction:column; }
+  .stamp{ align-self:flex-start; }
+  .cond{ max-width:none; }
+}
+
+/* —— 可访问性 —— */
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; }
+}
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
