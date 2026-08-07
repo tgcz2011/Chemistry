@@ -1,0 +1,224 @@
+# 交接文档 · 化学式速查（chem-check）
+
+> 本文档面向**接手本项目的人**（包括未来的自己）。读完应能：跑起来、改得动、不踩前人踩过的坑。
+> **维护约定见文末「📝 文档维护」——README 与本文档必须随每次开发同步更新。**
+
+- **线上地址**：https://chem-check.zztool.dpdns.org （备用 https://chem-check.tgcz2011.workers.dev ）
+- **代码仓库**：https://github.com/tgcz2011/Chemistry （`main` 分支，GPLv3）
+- **项目根目录**：`chem-check/`（本文件所在目录）
+- **技术栈**：Cloudflare Worker（静态资源 + API）+ Workers AI + D1，前端为无框架原生 ESM。
+
+---
+
+## 一、项目要点（一句话 + 设计哲学）
+
+**一句话**：输入任意化学式/化学方程式，毫秒级判断物质是否存在、配平方程式、补全产物、算化学计量，并给出颜色/形态/注意事项/来源。
+
+**核心设计哲学**——**多级 fallback 链**，不靠单一来源，逐级兜底：
+
+```
+本地知识库(110+精选, 毫秒) 
+  → 价键/氧化态规则(即时) 
+  → D1 缓存(14天, stale-while-revalidate) 
+  → PubChem(美国化学数据库, 权威证实存在性+CID+中文名) 
+  → Wikipedia(中/英, WikiData 兜底) 
+  → Workers AI(Qwen3-30B, 拿着前面的事实做总结) 
+  → 回写 D1 缓存
+```
+
+为什么这样设计：
+- **PubChem 是关键**——它是真实权威数据库，能直接"证实"一个化学式存在（给 CID），而不是让 AI 凭空猜。这解决了"所有化学式预设不完"的问题。
+- **AI 放最后且带着事实**——把 PubChem/Wiki 查到的事实塞进提示词，AI 只做总结判断，大幅降低幻觉。
+- **本地能算的不联网**——配平、常见反应补全、剂量变体都是纯本地逻辑，零成本零延迟。
+
+---
+
+## 二、功能清单（已实现）
+
+| # | 功能 | 说明 | 入口 |
+|---|------|------|------|
+| 1 | 物质存在性判定 | 稳定存在/仅特定条件/极不稳定/通常不存在 四档 + 注意事项 | `GET /api/check?formula=X` |
+| 2 | 颜色与形态 | 按形态给颜色（固体/晶体/水溶液/气体）+ 色块。如 CuCl₂ 固体棕黄、稀溶液蓝、浓溶液绿 | 同上，结果含 `colors` |
+| 3 | 方程式配平 | 代数法（浮点 RREF 求零空间→有理化最小正整数），可处理氧化还原 | `GET /api/equation?input=A+B=C+D` |
+| 4 | 反应补全 | 只给反应物 → 本地规则 / AI 补全产物并配平。如 `HCl+NaOH → NaCl+H₂O` | `GET /api/equation?input=A+B` |
+| 5 | 化学计量计算 | 给某物质的量（g/mol）→ 算其余物质的质量/摩尔 | 前端计算器 |
+| 6 | 状态符号 | 产物自动标沉淀 `↓`、气体 `↑`（溶解度表+气体表） | 方程式结果 |
+| 7 | 可逆反应 | 用 `⇌` 表示，如 `N₂+3H₂⇌2NH₃`、`CO₂+H₂O⇌H₂CO₃` | 方程式结果 `reversible` |
+| 8 | 剂量相关反应 | 少量/过量产物不同时**列出全部方程式**（分步+总反应）。内置 14 组 | 方程式结果 `mode:"dosage"` |
+| 9 | 物种存在性校验 | 方程式各物质联动判定，不存在的会警告（避免算不存在的反应） | 方程式结果 `nonexistent` |
+| 10 | 深度判定（AI） | 未收录物质调 Workers AI，返回名称/存在性/颜色/注意事项 | `&deep=1` |
+| 11 | 上报刷新 | 用户标记有误结果，限流后强制联网重查并更新缓存 | `GET /api/report?formula=X` |
+| 12 | D1 缓存 | 联网结果缓存 14 天，过期先返回旧值+后台刷新 | 自动 |
+
+---
+
+## 三、技术架构与数据流
+
+**单 Worker 架构**：一个 Worker 同时托管前端静态站（`assets` 绑定 `public/`）和 API（`/api/*`）。一次 `wrangler deploy` 全上。
+
+**核心引擎是同一份代码跑两端**：`public/chem-engine.js`（解析+判定）、`public/chem-calc.js`（配平+计量）是纯 ESM，浏览器直接 `<script type="module">` 用，Worker 也 import 用。**改判定/配平逻辑只改这两个文件，两端同时生效。**
+
+**请求流**：
+- 前端优先调 `/api/*`；调不到（如纯静态部署）自动回退到浏览器本地引擎判定。
+- `/api/check`：本地引擎 → 未命中且 `deep=1` → D1 缓存 → PubChem → Wiki → AI → 回写缓存。
+- `/api/equation`：完整方程式→本地配平；只给反应物→剂量变体表→本地反应规则→（仅当走 AI 时）D1 缓存→AI。
+
+---
+
+## 四、项目结构与依赖
+
+```
+chem-check/
+├── public/                      # 前端（也是 Worker 的静态资源目录）
+│   ├── index.html               # 页面结构（检验报告单/SDS 风）
+│   ├── styles.css               # 样式（暖纸色+发丝线+颗粒噪点+章戳）
+│   ├── app.js                   # 前端逻辑：判定+配平计算+变体渲染+上报 (291 行)
+│   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎 (814 行, 浏览器/Worker 共用)
+│   └── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量 (204 行, 含118元素原子量)
+├── src/                         # Worker 端
+│   ├── worker.js                # 路由 + fallback 链编排 + AI 提示词 + 上报 (462 行)
+│   ├── chem-sources.js          # PubChem / Wikipedia 客户端 (145 行)
+│   ├── chem-cache.js            # D1 缓存(stale-while-revalidate) + 限流 (101 行)
+│   └── chem-reactions.js        # 本地无机反应补全 + 状态符号 + 可逆 + 剂量变体 (188 行)
+├── migrations/
+│   └── 0001_init.sql            # D1 schema：formula_cache + report_usage 两表
+├── wrangler.toml                # 部署配置（Worker+静态资源+AI+D1+自定义域名）
+├── package.json                 # 仅 devDependency: wrangler
+├── LICENSE                      # GPLv3
+├── README.md                    # 面向用户/使用者
+└── HANDOFF.md                   # 本文件，面向开发者/接手者
+```
+
+**依赖**：
+- **运行时 npm 依赖：零**。全部原生 ESM，无框架、无构建步骤。
+- **devDependency**：`wrangler`（实际用的是系统 `/opt/homebrew/bin/wrangler`，v4.118.0）。
+- **Cloudflare 绑定**（在 `wrangler.toml`）：
+  - `AI` → Workers AI，模型 `@cf/qwen/qwen3-30b-a3b-fp8`
+  - `DB` → D1 数据库 `chem-check-cache`（id `8bbd002e-c105-4b9a-b46e-195dc100074f`）
+  - `ASSETS` → `public/` 静态资源
+  - 自定义域名 `chem-check.zztool.dpdns.org`
+- **前端外部依赖**：Google Fonts（Fraunces 衬线 + IBM Plex Sans/Mono）。⚠️ 国内加载可能慢，是潜在优化点（可换国内镜像或自托管）。
+
+**数据量**：知识库约 100+ 物质、COLORS 颜色表约 40 种、剂量变体 14 组。
+
+---
+
+## 五、部署与运维
+
+```bash
+cd chem-check
+
+# 本地开发（热重载 public/）
+wrangler dev --ip 127.0.0.1        # http://localhost:8787
+
+# 部署到生产
+wrangler deploy
+
+# 实时日志
+wrangler tail
+
+# D1 数据库（首次或改 schema 后）
+wrangler d1 migrations apply chem-check-cache --remote   # 生产
+wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
+
+# 清方程式缓存（改引擎后若担心残留）
+wrangler d1 execute chem-check-cache --remote --command "DELETE FROM formula_cache WHERE formula LIKE 'eq:%'"
+```
+
+**测试纯逻辑（无需起 dev，绕开网络坑）**：反应引擎、配平、判定都是纯 ESM，可直接用 Node 测：
+```bash
+node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteReaction(["CaCO3","H2SO4"])))'
+```
+
+---
+
+## 六、⚠️ 踩过的坑（前人血泪，接手必读）
+
+按"最可能再踩"排序。**每条都是真实犯过的错。**
+
+### Cloudflare / Wrangler 配置类
+1. **TOML 的 `[ai]` 段会吞掉后面的顶层键**。曾把 `routes` 吞进 `ai` 表导致**自定义域名整个丢失**。
+   → 用内联表 `ai = { binding = "AI" }`，或数组表 `[[d1_databases]]`，别用裸 `[段]`。
+2. **设了 `routes` 后 `workers.dev` 默认被禁用**。要保留备用域名需显式 `workers_dev = true`。
+3. **wrangler 必须在含 `wrangler.toml` 的目录运行**，否则报 "Missing entry-point"。后台任务 shell 的 cwd 不持续，**后台启动命令里要显式 `cd`**。
+4. **边缘部署后有 10~30 秒传播延迟**。测新功能前等一等，或给 URL 加缓存破坏参数（`?v=2`），否则会看到旧版本怀疑人生。
+
+### Workers AI（qwen3-30b）类
+5. **它返回的是 OpenAI `chat.completion` 格式**，文本在 `choices[0].message.content`。我最初取 `res.response`（是个对象），`String()` 后变 `"[object Object]"`，JSON 提取直接失败。→ `runAI` 已做多路径兼容，别改回单一路径。
+6. **该模型不支持 `response_format:{type:"json_object"}`，会抛错**。→ 用纯文本输出 + `extractJSON` 提取（能接受被前导/尾随文本包着的 JSON）。
+7. **务必关推理（thinking）**：`enable_thinking:false` 或提示词加 `/no_think`。否则本地 dev 曾跑到 150 秒；关了之后 edge 2~5 秒。
+8. **边缘 AI 冷启动偶发失败**。→ `aiJudgeSubstance` 里加了一次重试，明显改善。别随便去掉。
+
+### 网络/本地环境类（国内开发特有）
+9. **本地 dev 现在起不来**：`env.AI` 是 remote 模式，经本地代理无法建立 remote preview session，导致整个 `wrangler dev` 起不来。→ **纯逻辑用 Node 直接测**（见上），联网功能以**生产 edge 为准**。
+10. **本地 dev 下 Wikipedia 被墙超时、AI 走代理极慢**，但 **PubChem 经代理可用**（202 ListKey 轮询正常）。所以联网 fallback 链本地测不全，别在本地纠结，直接看线上。
+11. **curl 要走对代理**：本机 curl localhost 需 `--noproxy '*'`（环境有代理变量）；但 `workers.dev` 经本地代理反而不通，**自定义域名 `zztool.dpdns.org` 反而能 curl**（疑为透明代理按 SNI 处理差异）。
+12. **shell 里 `&` 后台起的进程会被工具回收**。长跑的 dev server 要用工具的 `run_in_background`，别用 `&`。
+
+### 化学逻辑类
+13. **单质曾被误判"不存在"**：规则引擎假定 H 恒为 +1，导致 `H2`/`O2`/`Fe` 电中性校验失败。→ `ruleCheck` 已加**单质分支**（0 价单质天然电中性）。改规则时注意别回归。
+14. **中文名可信过滤不能少**：`CaCl2` 曾从维基误命中列表页，返回"极度危险物质列表"当名字。→ `firstTrust` 会剔除"XX列表/索引/消歧义"及英文句子/全大写串。
+15. **方程式结果只缓存 AI 补全**：配平/本地规则/剂量变体是本地即时计算，**不缓存**。曾因缓存了 `N2+H2=NH3` 里 H2 的误判（修复前的 bug 值）导致修了 bug 还显示旧错。→ 引擎逻辑更新后，若有疑虑清一次 `eq:` 缓存。
+16. **`buildWarnings` 曾返回嵌套数组**导致前端渲染异常。→ 现在必须是扁平字符串数组，改它时注意。
+17. **剂量变体只写物种、系数交给配平器**：变体表里的 `left`/`right` 只列化学式，系数由 `balanceEquation` 算，这样保证原子守恒、不会手写出不守恒的方程式。
+
+---
+
+## 七、🔑 需要注意的点（运维/合规/成本）
+
+- **凭证安全**：仓库**不含任何密钥**。`wrangler.toml` 里的 `database_id` 是标识符（非密钥，别人拿到也无法访问，仍需你的账号授权）。真正的登录态在 `wrangler login` 的本地凭证里，**不要提交 `.dev.vars`/`.env`/`.wrangler/`**（已在 `.gitignore`）。
+- **AI 成本**：Workers AI 按用量计费（神经元）。已做的成本控制：① 本地规则优先，AI 兜底；② 只缓存 AI 结果，命中缓存不调 AI；③ 关 thinking 减少 token。若要进一步省，可给 AI 判定也加更激进的缓存。
+- **内容合规**：化学内容含剧毒/爆炸/腐蚀信息，属教育用途。**README 和页面底部的免责声明别删**。面向国内大众时保留"安全提示"。
+- **国内访问**：Cloudflare 默认境外节点，大陆访问慢属正常（非故障）。要加速需 EdgeOne/DNSPod 回源或 China Network（需 ICP 备案）。详见 README「国内部署注意事项」。
+- **D1 缓存 14 天 TTL**：过期先返回旧值+后台刷新（stale-while-revalidate）。改判定逻辑后，旧缓存可能"复活"旧结论——必要时手动清缓存。
+- **限流规则**：上报接口每设备每日 ≤20 次、单化学式每日 ≤3 次，超限返回 429。设备指纹 = IP+UA 的 djb2 哈希（无 `did` 时）。
+
+---
+
+## 八、当前进度（截至 2026-08-07）
+
+**已完成并生产验证通过**：
+- ✅ 去 AI 味的 SDS/检验报告单 UI（暖纸色+章戳+噪点，已上线）
+- ✅ 多级 fallback 判定链（知识库→规则→D1→PubChem→Wiki→AI）
+- ✅ 方程式配平（含氧化还原）、反应补全、化学计量计算
+- ✅ 状态符号 ↓/↑、可逆 ⇌、剂量变体（14 组，含分步+总反应）
+- ✅ 物质颜色/形态（约 40 种 + AI 补充）、物种存在性校验
+- ✅ D1 缓存 + 上报限流、GitHub 开源（GPLv3）
+- ✅ 生产实测：`AgOH`(知识库)、`CaCl2`(PubChem)、`K2FeO4`(PubChem+AI/高铁酸钾)、`Na2FeO4`(纯AI/高铁酸钠)、`CaCO3+H2SO4`(复分解+CO2↑)、`N2+H2⇌NH3`(可逆)、限流第4次被拦截，全部正确。
+
+**已知的待改进/小瑕疵**：
+- ⚠️ AI 对个别物质会"过度保守"判 uncertain（如 `XeF2`，模型能力所限，可接受）。
+- ⚠️ 前端 Google Fonts 国内加载慢，未做镜像/自托管。
+- ⚠️ 本地 `wrangler dev` 因 remote AI 起不来（见坑 #9），暂靠 Node 直测 + 线上验证。
+
+---
+
+## 九、后续可能规划（TODO，按价值排序）
+
+1. **扩充剂量变体表**：KAl(SO₄)₂、Na₂S 水解、多元弱酸分步电离、Cu 与浓/稀硝酸等。
+2. **可逆反应库扩充**：酯化反应、弱电解质电离、水解平衡。
+3. **物质颜色数据补全**：把 COLORS 覆盖到知识库全部 100+ 条目。
+4. **本地反应规则扩充**：盐+盐沉淀、分解反应、化合反应，进一步减少 AI 依赖。
+5. **接入开放反应数据库**（有机反应方向）：ORD(200万有机反应)、Chemotion、PubChem Reactions、Catalysis-Hub、Organic Syntheses。多为大数据集，适合离线预置或作为新的在线兜底源。详见 README「反应数据来源」。
+6. **配平增强**：离子方程式、氧化还原半反应配平。
+7. **前端字体优化**：Google Fonts 换国内镜像或自托管，改善国内首屏。
+8. **AI 缓存优化**：给 AI 判定结果加更长的缓存，进一步降本。
+
+---
+
+## 十、📝 文档维护约定（重要）
+
+**`README.md`（面向用户）与 `HANDOFF.md`（本文，面向开发者）必须随每次开发同步更新。**
+
+具体要求：
+- **新增/修改功能** → 更新 README 的功能清单、API 用法；更新 HANDOFF 的功能表、当前进度。
+- **改了架构/目录/依赖/部署方式** → 更新两份文档的对应章节。
+- **踩了新坑、犯了新错** → **必须记到 HANDOFF 第六节「踩过的坑」**，写清"现象+根因+解法"，让下一个人不再踩。
+- **做了技术选型/重要决策** → 记到 HANDOFF，并说明"为什么这么做"。
+- **每次 commit 前自查**：这两份文档是否还准确？不准就顺手改。
+
+> 原则：**代码会变，文档要跟着变；坑记一次，受益所有人。** 过期的文档比没有文档更害人。
+
+---
+
+*最后更新：2026-08-07 · 维护者：tgcz2011*
