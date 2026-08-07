@@ -561,6 +561,11 @@ function parseSegment(toks,pos){
 // ---------------------------------------------------------------------------
 function ruleCheck(parsed){
   const els=parsed.elements;
+  // 单质/同核分子（如 H2、O2、N2、Fe、S8）：元素以 0 价存在，天然电中性
+  if(Object.keys(els).length===1){
+    const sym=Object.keys(els)[0];
+    return {balanced:true, charged:false, elemental:true, note:`这是 ${ELEMENTS[sym].zh} 的单质（或同核分子），元素呈 0 价，通常稳定存在。`};
+  }
   // 带电离子：若整体电荷 != 0，则作为“物质”需与反离子结合
   if(parsed.charge!==0){
     return {balanced:true, charged:true, note:`该式表示一个带电离子（总电荷 ${parsed.charge>0?"+":""}${parsed.charge}），本身不是中性物质，需与带相反电荷的离子结合成盐/配合物。`};
@@ -603,6 +608,60 @@ function ruleCheck(parsed){
 }
 
 function fmtOS(x){ return x>0?("+"+x):(""+x); }
+
+// ---------------------------------------------------------------------------
+// 常见物质的颜色（按形态分类：固体/晶体/水溶液/气体等）
+// form: 形态；color: 颜色；hex: 代表色值（用于前端色块）
+// ---------------------------------------------------------------------------
+export const COLORS = {
+  // 铜系
+  "Cu":      [{form:"固体",color:"紫红色",hex:"#b87333"}],
+  "CuO":     [{form:"固体",color:"黑色",hex:"#1a1a1a"}],
+  "Cu2O":    [{form:"固体",color:"砖红色",hex:"#a8322a"}],
+  "CuSO4":   [{form:"无水固体",color:"白色",hex:"#f2f2f2"},{form:"水溶液",color:"蓝色",hex:"#1e6fd9"}],
+  "CuSO4.5H2O":[{form:"晶体",color:"蓝色",hex:"#2f7fe0"},{form:"水溶液",color:"蓝色",hex:"#1e6fd9"}],
+  "CuCl2":   [{form:"固体",color:"棕黄色",hex:"#7a5a2b"},{form:"稀溶液",color:"蓝色",hex:"#2a7de1"},{form:"浓溶液",color:"绿色",hex:"#2e8b57"}],
+  "Cu(OH)2": [{form:"固体",color:"蓝色",hex:"#3a7bd5"}],
+  // 铁系
+  "Fe":      [{form:"固体",color:"银白色",hex:"#c7ccd1"},{form:"粉末",color:"灰黑色",hex:"#4a4a4a"}],
+  "FeO":     [{form:"固体",color:"黑色",hex:"#1a1a1a"}],
+  "Fe2O3":   [{form:"固体",color:"红棕色",hex:"#a03d2a"}],
+  "Fe3O4":   [{form:"固体",color:"黑色",hex:"#151515"}],
+  "Fe(OH)2": [{form:"固体",color:"白色",hex:"#f4f4f0"},{form:"暴露空气",color:"灰绿→红褐",hex:"#7a6a55"}],
+  "Fe(OH)3": [{form:"固体/沉淀",color:"红褐色",hex:"#9c4a2a"}],
+  "FeCl3":   [{form:"固体",color:"黑棕色",hex:"#3a2a20"},{form:"水溶液",color:"黄色",hex:"#d9a82e"}],
+  "FeSO4":   [{form:"水溶液",color:"浅绿色",hex:"#8fbf9f"}],
+  "FeS":     [{form:"固体",color:"黑色",hex:"#1c1c1c"}],
+  // 锰/铬系
+  "KMnO4":   [{form:"晶体",color:"紫黑色",hex:"#5b2a86"},{form:"水溶液",color:"紫红色",hex:"#7a2a9e"}],
+  "MnO2":    [{form:"固体",color:"黑色",hex:"#1a1a1a"}],
+  "K2Cr2O7": [{form:"固体/溶液",color:"橙红色",hex:"#d96a1e"}],
+  "CrO3":    [{form:"固体",color:"暗红色",hex:"#8a1f1f"}],
+  // 卤素及银盐
+  "Cl2":     [{form:"气体",color:"黄绿色",hex:"#a8b820"}],
+  "Br2":     [{form:"液体",color:"红棕色",hex:"#8a3a1a"},{form:"溴水",color:"橙黄色",hex:"#d98a2e"}],
+  "I2":      [{form:"固体",color:"紫黑色",hex:"#4a2a5e"},{form:"碘水",color:"黄褐色",hex:"#a8763a"}],
+  "AgCl":    [{form:"沉淀",color:"白色",hex:"#f4f4f0"}],
+  "AgBr":    [{form:"沉淀",color:"淡黄色",hex:"#efe6b8"}],
+  "AgI":     [{form:"沉淀",color:"黄色",hex:"#e8d44a"}],
+  "Ag2O":    [{form:"固体",color:"棕黑色",hex:"#3a2a20"}],
+  "Ag3PO4":  [{form:"沉淀",color:"黄色",hex:"#e8d44a"}],
+  "AgNO3":   [{form:"固体/溶液",color:"无色",hex:"#f6f6f2"}],
+  // 其他常见
+  "Na2O2":   [{form:"固体",color:"淡黄色",hex:"#f0e6a8"}],
+  "S":       [{form:"固体",color:"淡黄色",hex:"#e8d44a"}],
+  "BaSO4":   [{form:"沉淀",color:"白色",hex:"#f4f4f0"}],
+  "CaCO3":   [{form:"固体/沉淀",color:"白色",hex:"#f4f4f0"}],
+  "CaO":     [{form:"固体",color:"白色",hex:"#f4f4f0"}],
+  "NO2":     [{form:"气体",color:"红棕色",hex:"#8a3a1a"}],
+  "NO":      [{form:"气体",color:"无色",hex:"#f6f6f2"}],
+  "CO":      [{form:"气体",color:"无色",hex:"#f6f6f2"}],
+  "CO2":     [{form:"气体",color:"无色",hex:"#f6f6f2"}],
+  "NH3":     [{form:"气体",color:"无色",hex:"#f6f6f2"}],
+  "H2O2":    [{form:"溶液",color:"无色",hex:"#f6f6f2"}],
+  "PbI2":    [{form:"沉淀",color:"黄色",hex:"#e8d44a"}],
+  "PbS":     [{form:"沉淀",color:"黑色",hex:"#1a1a1a"}]
+};
 
 // ---------------------------------------------------------------------------
 // 主分析：综合知识库 + 规则
@@ -661,6 +720,7 @@ export function analyze(raw){
     warnings:buildWarnings(tags,known),
     tags,
     related,
+    colors: (known && known.colors) || COLORS[normKey] || COLORS[parsed.raw] || null,
     ruleNote: rule.note
   };
 }
@@ -697,13 +757,15 @@ function buildWarnings(tags,known){
 // 简单中文命名（仅作兜底显示；二元化合物按「某化某」规则）
 function guessName(parsed){
   const els=parsed.elements;
-  const metals=Object.keys(els).filter(s=>ELEMENTS[s].metal);
-  const nonmetals=Object.keys(els).filter(s=>!ELEMENTS[s].metal);
+  const keys=Object.keys(els);
+  // 单质/同核分子：直接给元素名
+  if(keys.length===1) return ELEMENTS[keys[0]].zh;
+  const metals=keys.filter(s=>ELEMENTS[s].metal);
+  const nonmetals=keys.filter(s=>!ELEMENTS[s].metal);
   // 二元：非金属 + 化 + 金属（如 氯化钙、氧化银）
   if(metals.length===1 && nonmetals.length===1){
     return ELEMENTS[nonmetals[0]].zh + "化" + ELEMENTS[metals[0]].zh;
   }
-  if(nonmetals.length===1 && metals.length===0) return ELEMENTS[nonmetals[0]].zh+"单质";
   return null;
 }
 

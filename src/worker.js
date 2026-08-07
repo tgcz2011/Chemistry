@@ -11,8 +11,8 @@
 import { analyze, prettyFormula } from "../public/chem-engine.js";
 import { balanceEquation, parseEquation, molarMass, prettyEquation } from "../public/chem-calc.js";
 import { searchPubChem, pubchemChineseName, searchWiki, searchWikiByName } from "./chem-sources.js";
-import { getCached, setCached, checkAndIncrReport } from "./chem-cache.js";
-import { localCompleteReaction } from "./chem-reactions.js";
+import { getCached, setCached, checkAndIncrReport, getEqCached, setEqCached } from "./chem-cache.js";
+import { localCompleteReaction, lookupDosage, annotateStates, isReversible } from "./chem-reactions.js";
 
 const AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 
@@ -38,7 +38,7 @@ export default {
       if (path === "/api/equation") {
         const input = url.searchParams.get("input") || "";
         const condition = url.searchParams.get("condition") || "";
-        return await handleEquation(input, condition, env);
+        return await handleEquation(input, condition, env, ctx);
       }
     } catch (e) {
       return json({ ok: false, error: "服务器错误：" + (e && e.message ? e.message : String(e)) }, 500);
@@ -161,6 +161,7 @@ async function enrichOnline(local, env) {
       ok: true, input: local.input, normalized: local.normalized, elements: local.elements, charge: local.charge,
       name, verdict: "yes", confidence: "high", source: "pubchem", sources,
       notes, warnings: buildWarnings(ai?.tags || []), tags: ai?.tags || [], related: ai?.related || [],
+      colors: (ai && ai.colors) || local.colors || null,
       mass: top.molecularWeight || mass, ruleNote: local.ruleNote
     };
   }
@@ -177,6 +178,7 @@ async function enrichOnline(local, env) {
       name: firstTrust(ai.name) || wikiNameCn(wiki) || local.name,
       verdict: ai.verdict, confidence: "ai", source: "workers-ai", sources,
       notes: ai.notes, warnings: buildWarnings(ai.tags), tags: ai.tags, related: ai.related,
+      colors: ai.colors || local.colors || null,
       mass, ruleNote: local.ruleNote
     };
   }
@@ -212,9 +214,10 @@ async function aiJudgeOnce(env, c) {
 
   const system =
     "你是严谨的化学专家。基于已给事实，判断该化学物质并输出 JSON。结构：" +
-    '{"verdict":"yes|conditional|unstable|no","name":"规范中文名","notes":["注意事项1","注意事项2"],"tags":["toxic|corrosive|explosive|oxidize|unstable|charged"],"related":["相关化学式"]}。' +
+    '{"verdict":"yes|conditional|unstable|no","name":"规范中文名","notes":["注意事项1"],"tags":["toxic|corrosive|explosive|oxidize|unstable|charged"],"related":["相关化学式"],"colors":[{"form":"固体","color":"白色","hex":"#f4f4f0"}]}。' +
     "verdict 含义：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。" +
     "要求：基于事实下明确结论，不要堆砌“可能/也许”；notes 给 2-4 条具体可操作的中文注意事项（稳定性/保存/毒性/反应性/制取）；name 必须是规范中文名（按无机命名规则推算，如 某酸某/某化某/高某酸某），不要直接抄英文 IUPAC 名；" +
+    "colors 按形态给出颜色（固体/晶体/水溶液/气体等），每项含 form(形态)、color(中文颜色)、hex(最接近的十六进制色值)；无色则 color 写“无色”、hex 用 #f6f6f2；无资料可给空数组；" +
     "重要：PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐（如 K2MnO4、Na2FeO4）在 PubChem 中可能搜不到但确实存在，请结合价态与你的知识判断；tags 只能从给定集合选，无关则空数组；只输出 JSON，不要思考过程或 markdown。";
 
   const user = `化学式：${c.formula}\n元素组成：${elems}\n近似摩尔质量：${mass2(c.mass)} g/mol${ionLine}\n\n已知事实：\n${facts.join("\n")}\n\n请输出 JSON。`;
@@ -223,13 +226,17 @@ async function aiJudgeOnce(env, c) {
   const data = extractJSON(raw, "verdict");
   if (!data) return null;
   const tag = "（AI 推断，仅供参考）";
+  const colors = (Array.isArray(data.colors) ? data.colors : [])
+    .map(x => (x && typeof x === "object" && x.form && x.color) ? { form: String(x.form), color: String(x.color), hex: (typeof x.hex === "string" && /^#[0-9a-fA-F]{3,6}$/.test(x.hex) ? x.hex : "#cccccc") } : null)
+    .filter(Boolean).slice(0, 6);
   return {
     ok: true,
     verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict) ? data.verdict : "conditional",
     name: typeof data.name === "string" ? data.name : null,
     notes: (Array.isArray(data.notes) ? data.notes : []).map(x => String(x) + tag).slice(0, 4),
     tags: (Array.isArray(data.tags) ? data.tags : []).filter(t => ["toxic", "corrosive", "explosive", "oxidize", "unstable", "charged"].includes(t)),
-    related: Array.isArray(data.related) ? data.related.map(String).slice(0, 5) : []
+    related: Array.isArray(data.related) ? data.related.map(String).slice(0, 5) : [],
+    colors: colors.length ? colors : undefined
   };
 }
 
@@ -238,21 +245,37 @@ function mass2(m){ return (typeof m === "number" && isFinite(m)) ? m.toFixed(2) 
 // ---------------------------------------------------------------------------
 // 方程式配平与计算
 // ---------------------------------------------------------------------------
-async function handleEquation(input, condition, env) {
+async function handleEquation(input, condition, env, ctx) {
   if (!input.trim()) return json({ ok: false, error: "请输入反应物或完整方程式" }, 400);
   const eq = parseEquation(input);
   if (eq.error) return json({ ok: false, error: eq.error }, 400);
 
+  // D1 缓存：仅缓存「AI 补全」的结果（昂贵）；配平/本地/剂量都是本地即时计算，不缓存以免引擎更新后残留旧值
+  const cacheKey = (input.trim() + "|" + (condition || "").trim()).toLowerCase();
+
+  // 完整方程式 → 直接配平（本地、确定性，不缓存）
   if (!eq.reactantsOnly) {
     const r = balanceEquation(input);
     if (!r.ok) return json({ ok: false, error: r.error }, 400);
-    return json(buildEquationResponse(r, { mode: "balance", input }));
+    return json(buildEquationResponse(r, { mode: "balance", input, source: "local" }));
   }
 
+  // 仅反应物
   const reactants = eq.left;
+  // 1) 剂量相关反应（本地，多个方程式）
+  const dosage = lookupDosage(reactants);
+  if (dosage) {
+    const result = buildDosageResponse(dosage, input, condition);
+    if (result.ok) return json(result);
+  }
+  // 2) 本地规则补全
   let completion = localCompleteReaction(reactants);
-  if ((!completion || !completion.left.length || !completion.right.length) && env.AI) {
-    completion = await aiCompleteReaction(reactants, condition, env);
+  // 3) AI 补全（昂贵 → 走 D1 缓存）
+  if (!completion || !completion.left.length || !completion.right.length) {
+    const cached = await getEqCached(env, cacheKey);
+    if (cached && !cached.stale) return json({ ...cached.result, fromCache: true });
+    if (env.AI) completion = await aiCompleteReaction(reactants, condition, env);
+    if (completion && completion.left.length && completion.right.length) completion._ai = true;
   }
   if (!completion || !completion.left.length || !completion.right.length) {
     return json({ ok: false, error: "无法自动补全产物。请提供完整方程式（含产物）以进行配平，例如 HCl+NaOH=NaCl+H2O。", reactants }, 200);
@@ -260,16 +283,74 @@ async function handleEquation(input, condition, env) {
   const combined = completion.left.join("+") + "=" + completion.right.join("+");
   const r = balanceEquation(combined);
   if (!r.ok) return json({ ok: false, error: "补全的产物无法配平：" + r.error, completion }, 200);
-  return json(buildEquationResponse(r, { mode: "completion", input, type: completion.type || null, note: completion.note || null, condition: condition || null, ai: completion._ai || false }));
+  const result = buildEquationResponse(r, { mode: "completion", input, type: completion.type || null, note: completion.note || null, condition: condition || null, ai: completion._ai || false, source: completion._ai ? "workers-ai" : "local" });
+  if (completion._ai && ctx && ctx.waitUntil) ctx.waitUntil(setEqCached(env, cacheKey, result));
+  return json(result);
+}
+
+// 生成一侧的字符串（系数 + 下标化学式 + 状态符号）
+function sideStr(list) {
+  return list.map(o => (o.coeff > 1 ? o.coeff : "") + prettyFormula(o.formula) + (o.state || "")).join(" + ");
+}
+
+// 物种详情：名称、摩尔质量、存在性（用于校验不存在的物质）
+function speciesDetail(o) {
+  const info = analyze(o.formula);
+  return {
+    formula: o.formula, coeff: o.coeff, state: o.state,
+    molarMass: molarMass(o.formula),
+    name: info && info.ok ? info.name : null,
+    verdict: info && info.ok ? info.verdict : null,
+    colors: info && info.ok ? (info.colors || null) : null
+  };
 }
 
 function buildEquationResponse(r, extra) {
-  const all = [...r.left, ...r.right];
-  const species = all.map(o => {
-    const info = analyze(o.formula);
-    return { formula: o.formula, coeff: o.coeff, molarMass: molarMass(o.formula), name: info && info.ok ? info.name : null };
-  });
-  return { ok: true, equation: prettyEquation(r), left: species.slice(0, r.left.length), right: species.slice(r.left.length), species, ...extra };
+  const right = annotateStates(r.left, r.right.map(o => ({ ...o })));
+  const reversible = isReversible(r.left.map(o => o.formula), r.right.map(o => o.formula));
+  const arrow = reversible ? "⇌" : "→";
+  const all = [...r.left, ...right];
+  const species = all.map(speciesDetail);
+  const nonexistent = species.filter(s => s.verdict === "no").map(s => s.formula);
+  return {
+    ok: true,
+    equation: sideStr(r.left) + " " + arrow + " " + sideStr(right),
+    arrow, reversible,
+    left: species.slice(0, r.left.length),
+    right: species.slice(r.left.length),
+    species,
+    nonexistent: nonexistent.length ? nonexistent : undefined,
+    ...extra
+  };
+}
+
+// 剂量相关反应：为每个变体配平 + 标注状态 + 可逆
+function buildDosageResponse(dosage, input, condition) {
+  const variants = [];
+  for (const v of dosage.variants) {
+    const bal = balanceEquation(v.left.join("+") + "=" + v.right.join("+"));
+    if (!bal.ok) continue;
+    const right = annotateStates(bal.left, bal.right.map(o => ({ ...o })));
+    const reversible = isReversible(bal.left.map(o => o.formula), bal.right.map(o => o.formula));
+    const arrow = reversible ? "⇌" : "→";
+    const all = [...bal.left, ...right];
+    const species = all.map(speciesDetail);
+    variants.push({
+      label: v.label, note: v.note || "",
+      equation: sideStr(bal.left) + " " + arrow + " " + sideStr(right),
+      arrow, reversible,
+      left: species.slice(0, bal.left.length),
+      right: species.slice(bal.left.length),
+      species
+    });
+  }
+  if (!variants.length) return { ok: false };
+  return {
+    ok: true, mode: "dosage", source: "local",
+    title: dosage.title, input, condition: condition || null,
+    note: "该反应因反应物用量（少量/过量）不同而有不同方程式，已全部列出。",
+    variants
+  };
 }
 
 async function aiCompleteReaction(reactants, condition, env) {

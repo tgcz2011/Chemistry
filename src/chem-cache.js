@@ -51,6 +51,27 @@ export async function setCached(env, formula, result){
   }catch{ /* 缓存写失败不影响主流程 */ }
 }
 
+// ---- 方程式缓存（复用 formula_cache 表，key 加 "eq:" 前缀）----
+export async function getEqCached(env, key){
+  if(!env?.DB) return null;
+  try{
+    const row = await env.DB.prepare("SELECT result_json, updated_at FROM formula_cache WHERE formula = ?").bind("eq:"+key).first();
+    if(!row?.result_json) return null;
+    const result = JSON.parse(row.result_json);
+    return { result, stale: (Date.now()-(Number(row.updated_at)||0)) > STALE_MS };
+  }catch{ return null; }
+}
+export async function setEqCached(env, key, result){
+  if(!env?.DB) return;
+  const now = Date.now();
+  try{
+    await env.DB.prepare(
+      "INSERT INTO formula_cache (formula, verdict, name, source, result_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?) " +
+      "ON CONFLICT(formula) DO UPDATE SET result_json=excluded.result_json, updated_at=excluded.updated_at"
+    ).bind("eq:"+key, result.mode||"equation", null, result.source||"equation", JSON.stringify(result), now, now).run();
+  }catch{ /* 忽略 */ }
+}
+
 // ---- 上报限流：同一设备每日 ≤ 20 次、单化学式每日 ≤ 3 次 ----
 const DAILY_TOTAL = 20;
 const DAILY_FORMULA = 3;

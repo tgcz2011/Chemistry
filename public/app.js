@@ -122,6 +122,10 @@ function renderReport(res, raw, opts={}){
     `<div class="sec"><h4>说明与注意事项</h4><ul class="note-list">`+res.notes.map(n=>`<li>${escapeHtml(n)}</li>`).join("")+`</ul></div>`:"";
   const relatedHtml=(res.related&&res.related.length)?
     `<div class="sec"><h4>相关物质</h4><div class="related">`+res.related.map(r=>`<button class="rel" data-f="${r}">${prettyFormula(r)}</button>`).join("")+`</div></div>`:"";
+  const colorsHtml=(res.colors&&res.colors.length)?
+    `<div class="sec"><h4>颜色与形态</h4><div class="colorrow">`+
+    res.colors.map(c=>`<span class="cchip"><span class="cdot" style="background:${c.hex||"#ccc"}"></span>${escapeHtml(c.form)}：${escapeHtml(c.color)}</span>`).join("")+
+    `</div></div>`:"";
   const deepHtml = opts.deep ? `<div class="sec"><div class="loading">联网深度判定中（PubChem / 维基 / AI）…</div></div>` : "";
   // 知识库精选条目不支持上报；其余（联网/规则）可上报刷新
   const reportHtml = (res.source && res.source!=="knowledge-base") ?
@@ -144,6 +148,7 @@ function renderReport(res, raw, opts={}){
       </div>
       ${deepHtml}
       ${hazHtml}
+      ${colorsHtml}
       ${warnsHtml}
       ${notesHtml}
       ${sourcesHtml}
@@ -162,67 +167,86 @@ let lastEq=null;
 function renderEquation(j, raw){
   if(!j || j.ok===false){ eqResult.innerHTML=errHtml(j&&j.error?j.error:"无法处理该方程式"); return; }
   lastEq=j;
-  const typeStamp = j.type?`<div class="stamp stamp-type">${escapeHtml(j.type)}</div>`:"";
-  const modeText = j.mode==="completion" ? (j.ai?"AI 补全产物":"本地规则补全") : "方程式配平";
-  const noteHtml = j.note?`<div class="rep-sub">${escapeHtml(j.note)}</div>`:"";
-  const condHtml = j.condition?`<span><b>条件</b> ${escapeHtml(j.condition)}</span>`:"";
+  // 剂量相关：多个变体
+  if(j.mode==="dosage" && Array.isArray(j.variants) && j.variants.length){
+    const blocks=j.variants.map((v,i)=>eqBlockHTML(v,i)).join("");
+    eqResult.innerHTML=`<article class="report">
+      <div class="report-head">
+        <div><div class="rep-eq">${escapeHtml(j.title||"剂量相关反应")}</div>
+        <div class="rep-sub">${escapeHtml(j.note||"")}</div></div>
+        <div class="stamp stamp-type">用量相关</div>
+      </div>
+      ${blocks}
+    </article>`;
+    j.variants.forEach((v,i)=>{ const c=eqResult.querySelector("#vblock-"+i); if(c) wireCalc(c, v); });
+    eqResult.scrollIntoView({behavior:"smooth",block:"nearest"});
+    return;
+  }
+  // 单一方程式
+  eqResult.innerHTML=`<article class="report">${eqHeaderHTML(j)}${eqBlockHTML(j,0)}</article>`;
+  const c=eqResult.querySelector("#vblock-0"); if(c) wireCalc(c, j);
+  eqResult.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
 
-  const rows = j.species.map(s=>{
-    const isLeft = j.left.some(l=>l.formula===s.formula && l.coeff===s.coeff);
-    // 归属按顺序：left 数组在前
-    return s;
-  });
-  // 构造物种表（左=反应物，右=生成物）
+// 单一方程式头部：方程式 + 类型章 + 方式/条件/缓存/可逆 + 不存在警告
+function eqHeaderHTML(j){
+  const typeStamp=j.type?`<div class="stamp stamp-type">${escapeHtml(j.type)}</div>`:"";
+  const modeText = j.mode==="completion" ? (j.ai?"AI 补全产物":"本地规则补全") : j.mode==="balance" ? "方程式配平" : (j.mode||"");
+  const condHtml = j.condition?`<span><b>条件</b> ${escapeHtml(j.condition)}</span>`:"";
+  const cacheHtml = j.fromCache?`<span><b>缓存</b> 是</span>`:"";
+  const revHtml = j.reversible?`<span class="revtag">⇌ 可逆反应</span>`:"";
+  const noteHtml = j.note?`<div class="rep-sub">${escapeHtml(j.note)}</div>`:"";
+  const nonHtml = (j.nonexistent&&j.nonexistent.length)?`<div class="sec"><div class="warn">注意：以下物质经判断通常不存在或极不稳定：${j.nonexistent.map(prettyFormula).join("、")}，请核对化学式。</div></div>`:"";
+  return `<div class="report-head">
+      <div><div class="rep-eq">${escapeHtml(j.equation)}</div>${noteHtml}</div>
+      ${typeStamp}
+    </div>
+    <div class="meta"><span><b>方式</b> ${modeText}</span>${condHtml}${cacheHtml}${revHtml}</div>
+    ${nonHtml}`;
+}
+
+// 一个方程式块：变体标签(若有) + 物种表 + 计量计算器
+function eqBlockHTML(j, idx){
+  const labelHtml = j.label?`<div class="sec"><h4>${escapeHtml(j.label)}</h4><div class="rep-eq small">${escapeHtml(j.equation)}</div>${j.note?`<div class="rep-sub">${escapeHtml(j.note)}</div>`:""}</div>`:"";
   const sideTag=(isLeft)=>isLeft?`<span class="sidetag">反应物</span>`:`<span class="sidetag p">生成物</span>`;
-  const mkRow=(s,isLeft)=>`<tr><td class="f">${sideTag(isLeft)}${prettyFormula(s.formula)}</td>`+
+  const colorDot=(s)=>{ if(s.colors&&s.colors.length){const c=s.colors[0];return `<span class="cdot" style="background:${c.hex}" title="${c.form}：${c.color}"></span>`;} return "";};
+  const mkRow=(s,isLeft)=>`<tr><td class="f">${sideTag(isLeft)}${prettyFormula(s.formula)}${s.state||""}${colorDot(s)}</td>`+
     `<td class="num">${s.coeff}</td>`+
     `<td class="num">${s.molarMass!=null?s.molarMass.toFixed(2):"—"}</td>`+
     `<td class="n">${s.name?escapeHtml(s.name):""}</td></tr>`;
   const tableRows = j.left.map(s=>mkRow(s,true)).join("") + j.right.map(s=>mkRow(s,false)).join("");
-
-  // 计量计算器
   const options=j.species.map((s,i)=>`<option value="${i}">${prettyFormula(s.formula)}</option>`).join("");
-  eqResult.innerHTML=`
-    <article class="report">
-      <div class="report-head">
-        <div>
-          <div class="rep-eq">${escapeHtml(j.equation)}</div>
-          ${noteHtml}
-        </div>
-        ${typeStamp}
+  return `<div class="vblock" id="vblock-${idx}">
+    ${labelHtml}
+    <div class="sec">
+      <h4>配平系数 · 摩尔质量</h4>
+      <table class="eqtable"><thead><tr><th>物质</th><th>系数</th><th>M (g/mol)</th><th>名称</th></tr></thead><tbody>${tableRows}</tbody></table>
+    </div>
+    <div class="sec calc">
+      <h4>化学计量计算</h4>
+      <div class="calc-row">
+        <select class="calc-sp">${options}</select>
+        <input class="calc-amt" type="number" step="any" placeholder="数量" style="width:110px"/>
+        <span class="unit"><button data-u="g" class="active">g</button><button data-u="mol">mol</button></span>
+        <button class="btn calc-go" style="padding:9px 18px">计算</button>
       </div>
-      <div class="meta"><span><b>方式</b> ${modeText}</span>${condHtml}</div>
-      <div class="sec">
-        <h4>配平系数 · 摩尔质量</h4>
-        <table class="eqtable">
-          <thead><tr><th>物质</th><th>系数</th><th>M (g/mol)</th><th>名称</th></tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-      </div>
-      <div class="sec calc">
-        <h4>化学计量计算</h4>
-        <div class="calc-row">
-          <select id="calc-sp">${options}</select>
-          <input id="calc-amt" type="number" step="any" placeholder="数量" style="width:110px"/>
-          <span class="unit">
-            <button data-u="g" class="active">g</button><button data-u="mol">mol</button>
-          </span>
-          <button class="btn" id="calc-go" style="padding:9px 18px">计算</button>
-        </div>
-        <div class="calc-result" id="calc-out"></div>
-      </div>
-    </article>`;
+      <div class="calc-result"></div>
+    </div>
+  </div>`;
+}
 
-  // 计算器逻辑
+// 绑定某容器内的计量计算器（每个方程式块独立）
+function wireCalc(container, j){
+  if(!container) return;
   let unit="g";
-  eqResult.querySelectorAll(".unit button").forEach(b=>b.addEventListener("click",()=>{
+  container.querySelectorAll(".unit button").forEach(b=>b.addEventListener("click",()=>{
     unit=b.dataset.u;
-    eqResult.querySelectorAll(".unit button").forEach(x=>x.classList.toggle("active",x===b));
+    container.querySelectorAll(".unit button").forEach(x=>x.classList.toggle("active",x===b));
   }));
-  eqResult.querySelector("#calc-go").addEventListener("click",()=>{
-    const sp=j.species[+eqResult.querySelector("#calc-sp").value];
-    const amt=parseFloat(eqResult.querySelector("#calc-amt").value);
-    const out=eqResult.querySelector("#calc-out");
+  container.querySelector(".calc-go").addEventListener("click",()=>{
+    const sp=j.species[+container.querySelector(".calc-sp").value];
+    const amt=parseFloat(container.querySelector(".calc-amt").value);
+    const out=container.querySelector(".calc-result");
     if(!isFinite(amt)||amt<=0){ out.innerHTML=`<div class="err">请输入一个正数。</div>`; return; }
     const anchorMoles = unit==="g" ? (sp.molarMass? amt/sp.molarMass : NaN) : amt;
     if(!isFinite(anchorMoles)){ out.innerHTML=`<div class="err">该物质缺少摩尔质量，无法按克换算。</div>`; return; }
@@ -235,7 +259,6 @@ function renderEquation(j, raw){
     }).join("");
     out.innerHTML=`<table class="eqtable"><thead><tr><th>物质</th><th>系数</th><th>物质的量</th><th>质量</th></tr></thead><tbody>${trs}</tbody></table>`;
   });
-  eqResult.scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
 // 上报刷新：限流后强制联网重查并更新缓存

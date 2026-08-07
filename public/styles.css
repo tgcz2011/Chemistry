@@ -211,6 +211,24 @@ body{
 a.rel{ text-decoration:none; display:inline-block; }
 .rep-hint{ font-size:12px; color:var(--ink-3); margin-left:8px; font-family:var(--mono); }
 
+/* —— 颜色与形态 —— */
+.colorrow{ display:flex; flex-wrap:wrap; gap:8px 14px; }
+.cchip{ display:inline-flex; align-items:center; gap:7px; font-size:13px; color:var(--ink);
+  border:1px solid var(--line-strong); border-radius:20px; padding:5px 12px; background:var(--paper); }
+.cdot{ display:inline-block; width:14px; height:14px; border-radius:50%; border:1px solid var(--line-strong);
+  vertical-align:-2px; margin-left:4px; flex:none; }
+td.f .cdot{ margin-left:8px; }
+
+/* —— 可逆反应标记 —— */
+.revtag{ font-family:var(--mono); font-size:12px; color:var(--indigo); border:1px solid var(--indigo);
+  border-radius:14px; padding:2px 10px; }
+
+/* —— 方程式变体块 —— */
+.vblock{ border-top:1px dashed var(--line); }
+.vblock:first-of-type{ border-top:none; }
+.rep-eq.small{ font-size:17px; }
+.vblock .rep-eq.small{ margin:2px 0 4px; }
+
 /* —— 错误 / 加载 —— */
 .err{ color:var(--no); font-size:15px; padding:16px 0; }
 .err b{ color:var(--ink); }
