@@ -85,19 +85,10 @@ async function handleCheck(formula, deep, env, ctx) {
     return json(normalizeResult(local));
   }
 
-  // 2) D1 缓存
+  // 2) D1 缓存（永不过期，上报刷新时覆盖）
   const cached = await getCached(env, formula);
   if (cached) {
-    if (!cached.stale) {
-      return json(normalizeResult({ ...cached.result, fromCache: true }));
-    }
-    // 过期：先返回旧值，后台联网刷新
-    if (ctx && ctx.waitUntil) {
-      ctx.waitUntil((async () => {
-        try { const fresh = await enrichOnline(local, env); await setCached(env, formula, fresh); } catch (e) {}
-      })());
-    }
-    return json(normalizeResult({ ...cached.result, fromCache: true, stale: true }));
+    return json(normalizeResult({ ...cached.result, fromCache: true }));
   }
 
   // 3) 联网：PubChem → Wiki → AI
