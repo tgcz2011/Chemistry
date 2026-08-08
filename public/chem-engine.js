@@ -1172,8 +1172,20 @@ export function normalizeFormula(raw){
   let s = String(raw).trim();
   s = s.replace(/\s+/g,"");
   s = s.replace(/[·•・]/g,".");          // 各种中点 -> 小数点
-  s = s.replace(/\^([+-]?\d*)/g,(m,sign)=> sign); // H2O^ -> H2O, Fe^3+ -> Fe3+
-  // 处理显式电荷：把末尾的 +N / -N 形式标准化（在解析时单独处理）
+  // 规范化电荷写法：统一为 ^[数字][符号] 形式（如 Fe^2+、(PO4)^3-、SO4^2-）
+  // 支持：Fe2+ → Fe^2+、Fe+2 → Fe^2+、Fe^2+ 不变、Fe^+2 → Fe^2+
+  //      (PO4)3- → (PO4)^3-、(PO4)^3- 不变、(PO4)^-3 → (PO4)^3-
+  // 1) 已有 ^ 的：^+2 / ^-3 → ^2+ / ^3-（符号在前的统一为数字在前）
+  s = s.replace(/\^([+-])(\d+)$/, "^$2$1");
+  // 2) 无 ^ 的：末尾 N± / ±N / ± 补上 ^（排除已有 ^ 的情况）
+  if (!/\^[\d+-]*[+-]$/.test(s)) {
+    // Fe+2 / (PO4)-3 → Fe^2+ / (PO4)^3-（符号在前）
+    s = s.replace(/([+-])(\d+)$/, "^$2$1");
+    // 若上一步加了 ^，跳过；否则 Fe2+ / Cl- → Fe^2+ / Cl^-
+    if (!/\^[\d+-]*[+-]$/.test(s)) {
+      s = s.replace(/(\d+[+-]|[+-])$/, "^$1");
+    }
+  }
   return s;
 }
 
@@ -1208,15 +1220,19 @@ function tokenize(src){
       const mag = num===""?1:parseInt(num,10);
       tokens.push({t:"CHG",v:sign==="+"?mag:-mag});
     } else if(c==="^"){
-      // 上标电荷，格式 ^+ 或 ^3+ 或 ^- 等
+      // 上标电荷，支持格式：^+ ^- ^2+ ^3- ^+2 ^-3
       i++;
       let s="";
       while(i<src.length && /[+\-0-9]/.test(src[i])){ s+=src[i]; i++; }
-      const m=s.match(/^([+-]?)(\d*)$/);
-      if(m){
-        const sign=m[1]==="-"?-1:1;
-        const mag=m[2]===""?1:parseInt(m[2],10);
-        tokens.push({t:"CHG",v:sign*mag});
+      // 统一为 [数字][符号] 形式解析
+      const m1=s.match(/^(\d*)([+-])$/);    // 2+ / 3- / + / -
+      const m2=s.match(/^([+-])(\d+)$/);   // +2 / -3
+      if(m1){
+        const mag=m1[1]===""?1:parseInt(m1[1],10);
+        tokens.push({t:"CHG",v:m1[2]==="+"?mag:-mag});
+      } else if(m2){
+        const mag=parseInt(m2[2],10);
+        tokens.push({t:"CHG",v:m2[1]==="+"?mag:-mag});
       }
     } else {
       throw new Error("无法识别的字符："+c);
@@ -1487,7 +1503,7 @@ export function detectRadical(parsed){
 // 主分析：综合知识库 + 规则
 // ---------------------------------------------------------------------------
 export function analyze(raw){
-  const parsed=parseFormula(raw);
+  const parsed=parseFormula(normalizeFormula(raw));
   if(!parsed.ok){
     return {ok:false,input:raw,error:parsed.error,verdict:null};
   }
@@ -1600,25 +1616,47 @@ export const TEMPLATES = [
   {label:"( )",ins:"()",type:"wrap"},
   {label:"[ ]",ins:"[]",type:"wrap"},
   {label:"·",ins:"·",type:"ins"},
-  {label:"OH⁻",ins:"(OH)",type:"ins"},
-  {label:"SO₄²⁻",ins:"(SO4)",type:"ins"},
-  {label:"CO₃²⁻",ins:"(CO3)",type:"ins"},
-  {label:"NO₃⁻",ins:"(NO3)",type:"ins"},
-  {label:"NH₄⁺",ins:"(NH4)",type:"ins"},
-  {label:"PO₄³⁻",ins:"(PO4)",type:"ins"},
+  {label:"OH⁻",ins:"(OH)^-",type:"ins"},
+  {label:"SO₄²⁻",ins:"(SO4)^2-",type:"ins"},
+  {label:"CO₃²⁻",ins:"(CO3)^2-",type:"ins"},
+  {label:"NO₃⁻",ins:"(NO3)^-",type:"ins"},
+  {label:"NH₄⁺",ins:"(NH4)^+",type:"ins"},
+  {label:"PO₄³⁻",ins:"(PO4)^3-",type:"ins"},
   {label:"H₂O",ins:"H2O",type:"ins"},
-  {label:"²⁺",ins:"2+",type:"ins"},
-  {label:"³⁺",ins:"3+",type:"ins"},
-  {label:"⁻",ins:"-",type:"ins"}
+  {label:"²⁺",ins:"^2+",type:"ins"},
+  {label:"³⁺",ins:"^3+",type:"ins"},
+  {label:"³⁻",ins:"^3-",type:"ins"},
+  {label:"⁻",ins:"^-",type:"ins"}
 ];
 
 export function prettyFormula(text){
   const subMap={"0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉"};
-  let out="";
-  for(const ch of String(text)){
-    if(/[0-9]/.test(ch)) out+=subMap[ch]||ch;
-    else if(ch===".") out+="·";
-    else out+=ch;
-  }
-  return out;
+  const supMap={"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹","+":"⁺","-":"⁻"};
+  const toSub = (s)=>s.split("").map(d=>subMap[d]||d).join("");
+  const toSup = (s)=>s.split("").map(d=>supMap[d]||d).join("");
+  let s = String(text);
+  // 先把电荷部分提取出来（^2+ / ^3- / ^+2 / ^-3 / ^+ / ^-），单独转上标
+  let chargePart = "";
+  s = s.replace(/\^([+-]?\d*[+-]?)$/, (m, body) => {
+    // 规范化 body 为 [数字][符号]
+    let num="", sign="";
+    const m1=body.match(/^(\d*)([+-])$/);   // 2+ / 3- / + / -
+    const m2=body.match(/^([+-])(\d+)$/);    // +2 / -3
+    if(m1){ num=m1[1]; sign=m1[2]; }
+    else if(m2){ num=m2[2]; sign=m2[1]; }
+    else { chargePart=""; return m; }
+    chargePart = (num?toSup(num):"") + supMap[sign];
+    return "\x00CHARGE\x00";  // 占位符，避免后续被当数字处理
+  });
+  // 处理水合点
+  s = s.replace(/\./g,"·");
+  // 数字 → 下标，但水合点后的系数不下标（如 CuSO4·5H2O → CuSO₄·5H₂O，5 不下标）
+  s = s.replace(/(\d+)/g, (match, _grp, offset, string) => {
+    const before = string[offset - 1];
+    if (before === "·") return match;  // 水合系数不下标
+    return toSub(match);
+  });
+  // 恢复电荷上标
+  s = s.replace(/\x00CHARGE\x00/g, chargePart);
+  return s;
 }
