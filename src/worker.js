@@ -152,9 +152,9 @@ async function enrichOnline(local, env) {
     if (wiki?.en?.url) sources.push({ label: wiki.en.source === "wikidata" ? "维基数据（英文）" : "维基百科（英文）", url: wiki.en.url });
 
     const ai = await aiJudgeSubstance(env, { formula: local.normalized, composition: local.elements, mass, charge: local.charge, pubchem: { name: top.iupacName || top.title, cid: top.cid, isomers: pub.count }, wiki, localHints });
-    const name = firstTrust(ai?.name) || cnName || wikiNameCn(wiki) || local.name || (top.title || top.iupacName);
+    const name = buildName(ai?.name, cnName, wikiNameCn(wiki), local.name, (top.title || top.iupacName));
     const notes = [];
-    notes.push(`PubChem（美国国家化学数据库，1.1 亿+ 化合物）已收录该化学式（CID ${top.cid}，规范化式 ${top.molecularFormula}，分子量 ${top.molecularWeight}），存在性得到联网证实。`);
+    notes.push({cn:`PubChem（美国国家化学数据库，1.1 亿+ 化合物）已收录该化学式（CID ${top.cid}，规范化式 ${top.molecularFormula}，分子量 ${top.molecularWeight}），存在性得到联网证实。`, en:`PubChem (NCBI chemical database, 110M+ compounds) records this formula (CID ${top.cid}, canonical ${top.molecularFormula}, MW ${top.molecularWeight}); existence confirmed online.`});
     if (ai && ai.ok && ai.notes.length) notes.push(...ai.notes);
     return {
       ok: true, input: local.input, normalized: local.normalized, elements: local.elements, charge: local.charge,
@@ -176,7 +176,7 @@ async function enrichOnline(local, env) {
   if (ai && ai.ok) {
     return {
       ok: true, input: local.input, normalized: local.normalized, elements: local.elements, charge: local.charge,
-      name: firstTrust(ai.name) || wikiNameCn(wiki) || local.name,
+      name: buildName(ai.name, null, wikiNameCn(wiki), local.name, null),
       verdict: ai.verdict, confidence: "ai", source: "workers-ai", sources,
       notes: ai.notes, warnings: buildWarnings(ai.tags), tags: ai.tags, related: ai.related,
       colors: ai.colors || local.colors || null,
@@ -220,81 +220,85 @@ async function aiJudgeOnce(env, c) {
     "【JSON 结构（所有字段必须出现，无资料给空数组 []，不得省略任何字段）】\n" +
     "{\n" +
     '  "verdict": "yes|conditional|unstable|no",\n' +
-    '  "name": "规范中文名",\n' +
-    '  "notes": ["2-4条具体可操作的中文注意事项"],\n' +
+    '  "name": {"cn":"规范中文名","en":"English name"},\n' +
+    '  "notes": [{"cn":"中文注意事项","en":"English note"}],\n' +
     '  "tags": ["危险标签"],\n' +
     '  "related": ["相关化学式"],\n' +
-    '  "colors": [{"form":"形态","color":"中文颜色","hex":"#十六进制色值","ion":null}],\n' +
-    '  "redox": [{"condition":"条件","behavior":"氧化性|还原性|歧化|无","detail":"具体描述"}],\n' +
-    '  "solubility": [{"solvent":"溶剂","value":"易溶|可溶|微溶|难溶|不溶","note":"具体数值或说明"}]\n' +
+    '  "colors": [{"form":{"cn":"形态","en":"form"},"color":{"cn":"颜色","en":"color"},"hex":"#hex","ion":null}],\n' +
+    '  "redox": [{"condition":{"cn":"条件","en":"condition"},"behavior":{"cn":"氧化性|还原性|歧化|既氧化又还原|无显著氧化还原性","en":"Oxidizing|Reducing|Disproportionation|Both|No significant redox activity"},"detail":{"cn":"描述","en":"description"}}],\n' +
+    '  "solubility": [{"solvent":{"cn":"溶剂","en":"solvent"},"value":{"cn":"易溶|可溶|微溶|难溶|不溶","en":"very soluble|soluble|slightly soluble|practically insoluble|insoluble"},"note":{"cn":"说明","en":"note"}}]\n' +
     "}\n\n" +
     "【字段规则】\n" +
     "verdict：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。\n" +
-    "name：规范中文名（按无机命名规则推算，如 某酸某/某化某/高某酸某），不要直接抄英文 IUPAC 名。\n" +
-    "notes：2-4 条具体注意事项（稳定性/保存/毒性/反应性/制取），每条一句完整中文，不要过于简略。\n" +
+    "name：中英文规范名。中文名按无机命名规则（如 某酸某/某化某/高某酸某），英文名用 IUPAC 惯用名（如 Copper sulfate）。\n" +
+    "notes：2-4 条具体注意事项（稳定性/保存/毒性/反应性/制取），每条含中英文，一句完整。\n" +
     "tags：只能从 toxic|corrosive|explosive|oxidize|unstable|charged 中选，无关则给空数组 []。\n" +
     "related：相关化学式，最多 5 个，无则空数组。\n" +
-    "colors：按形态分类（固体/晶体/水溶液/气体等）；无色写 color=\"无色\"、hex=\"#f6f6f2\"；" +
-    "ion 填导致该颜色的离子/物种（如 \"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺\"、\"MnO₄⁻\"、\"Fe³⁺\" 等），若颜色来自物质整体而非特定离子则填 null；无资料给空数组。\n" +
-    "redox：按条件分类讨论氧化/还原性（如 在水中、在酸性条件下、在碱性条件下、加热时等）；" +
-    "behavior 从「氧化性/还原性/歧化/既氧化又还原/无显著氧化还原性」中选；detail 给具体描述（如 能氧化I⁻为I₂、被KMnO₄氧化等）；无资料给空数组。\n" +
-    "solubility：按溶剂分类（水、乙醇、丙酮、苯等）；value 从「易溶/可溶/微溶/难溶/不溶」中选；" +
-    "note 给具体数值（如 20°C 约 23g/100mL）或反应说明（如 遇水分解）；无资料给空数组。\n\n" +
+    "colors：按形态分类（固体/晶体/水溶液/气体等）；无色写 color={cn:\"无色\",en:\"colorless\"}、hex=\"#f6f6f2\"；" +
+    "ion 填导致该颜色的离子/物种（中英文），若颜色来自物质整体则填 null；无资料给空数组。\n" +
+    "redox：按条件分类讨论；behavior 中英文枚举；detail 中英文描述；无资料给空数组。\n" +
+    "solubility：按溶剂分类；value 中英文枚举；note 中英文数值/说明；无资料给空数组。\n\n" +
     "【重要原则】\n" +
-    "1. PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐（如 K2MnO4、Na2FeO4）在 PubChem 中可能搜不到但确实存在，请结合价态与你的知识判断。\n" +
-    "2. 基于事实下明确结论，不要堆砌“可能/也许”。\n" +
-    "3. 所有字段必须出现，即使为空数组 []，也不得省略。\n" +
-    "4. 只输出 JSON，不要任何解释文字。\n\n" +
+    "1. PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐在 PubChem 中可能搜不到但确实存在。\n" +
+    "2. 基于事实下明确结论，不要堆砌可能/也许。\n" +
+    "3. 所有字段必须出现，即使为空数组 []。\n" +
+    "4. 化学式、离子符号、数字、温度不翻译（如 Cu²⁺、MnO₄⁻、20°C）。\n" +
+    "5. 只输出 JSON，不要任何解释文字。\n\n" +
     "【正确示例 - CuSO4】\n" +
-    '{"verdict":"yes","name":"硫酸铜","notes":["无水硫酸铜为白色粉末，吸水后变蓝，可作干燥剂。","五水合物 CuSO4·5H2O 俗称胆矾，蓝色晶体。","重金属盐有毒，避免误食，废液按含铜废液处理。"],"tags":["toxic"],"related":["CuSO4·5H2O","Cu(OH)2","BaCl2"],"colors":[{"form":"无水固体","color":"白色","hex":"#f4f4f0","ion":null},{"form":"水溶液","color":"蓝色","hex":"#2e6fd6","ion":"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺"}],"redox":[{"condition":"在水中","behavior":"无显著氧化还原性","detail":"Cu²⁺ 较稳定，不氧化水。"},{"condition":"活泼金属置换","behavior":"氧化性","detail":"Cu²⁺ 可被 Zn/Fe 置换为 Cu 单质。"}],"solubility":[{"solvent":"水","value":"易溶","note":"20°C 约 23g/100mL"},{"solvent":"乙醇","value":"微溶","note":"难溶于无水乙醇"}]}\n\n' +
+    '{"verdict":"yes","name":{"cn":"硫酸铜","en":"Copper sulfate"},"notes":[{"cn":"无水硫酸铜为白色粉末，吸水后变蓝，可作干燥剂。","en":"Anhydrous copper sulfate is a white powder that turns blue upon water absorption, usable as a desiccant."},{"cn":"五水合物 CuSO4·5H2O 俗称胆矾，蓝色晶体。","en":"The pentahydrate CuSO4·5H2O (blue vitriol) forms blue crystals."},{"cn":"重金属盐有毒，避免误食，废液按含铜废液处理。","en":"Heavy metal salt: toxic if ingested; treat waste as copper-containing."}],"tags":["toxic"],"related":["CuSO4·5H2O","Cu(OH)2","BaCl2"],"colors":[{"form":{"cn":"无水固体","en":"anhydrous solid"},"color":{"cn":"白色","en":"white"},"hex":"#f4f4f0","ion":null},{"form":{"cn":"水溶液","en":"aqueous solution"},"color":{"cn":"蓝色","en":"blue"},"hex":"#2e6fd6","ion":{"cn":"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺","en":"Cu²⁺ hydrated as [Cu(H₂O)₄]²⁺"}}],"redox":[{"condition":{"cn":"在水中","en":"in water"},"behavior":{"cn":"无显著氧化还原性","en":"No significant redox activity"},"detail":{"cn":"Cu²⁺ 较稳定，不氧化水。","en":"Cu²⁺ is stable and does not oxidize water."}},{"condition":{"cn":"活泼金属置换","en":"displacement by active metals"},"behavior":{"cn":"氧化性","en":"Oxidizing"},"detail":{"cn":"Cu²⁺ 可被 Zn/Fe 置换为 Cu 单质。","en":"Cu²⁺ can be displaced by Zn/Fe to form Cu."}}],"solubility":[{"solvent":{"cn":"水","en":"water"},"value":{"cn":"易溶","en":"very soluble"},"note":{"cn":"20°C 约 23g/100mL","en":"~23g/100mL at 20°C"}},{"solvent":{"cn":"乙醇","en":"ethanol"},"value":{"cn":"微溶","en":"slightly soluble"},"note":{"cn":"难溶于无水乙醇","en":"poorly soluble in anhydrous ethanol"}}]}\n\n' +
     "【错误示例（禁止这样做）】\n" +
     "× 省略 colors/redox/solubility 字段\n" +
-    "× color 写\"蓝色\"但不给 ion 来源\n" +
-    "× redox 只写一条\"具有氧化性\"不分条件\n" +
-    "× solubility 只写\"可溶于水\"不分溶剂\n" +
-    "× notes 写\"有毒\"过于简略";
+    "× 只给中文不给英文\n" +
+    "× color 写蓝色但不给 ion 来源\n" +
+    "× redox 只写一条不分条件\n" +
+    "× solubility 只写可溶于水不分溶剂\n" +
+    "× notes 写有毒过于简略";
 
   const user = `化学式：${c.formula}\n元素组成：${elems}\n近似摩尔质量：${mass2(c.mass)} g/mol${ionLine}\n\n已知事实：\n${facts.join("\n")}\n\n请输出 JSON。`;
 
-  const raw = await runAI(env, { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 1800 });
+  const raw = await runAI(env, { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 2400 });
   const data = extractJSON(raw, "verdict");
   if (!data) return null;
-  const tag = "（AI 推断，仅供参考）";
+  const tagCn = "（AI 推断，仅供参考）", tagEn = " (AI-inferred, for reference only)";
+  // 双语字段：接受 {cn,en} 对象或降级为字符串
+  const bi = v => v ? (typeof v==="object" ? {cn:v.cn||v.en||"", en:v.en||v.cn||""} : {cn:String(v),en:String(v)}) : null;
+  const biStr = v => v ? (typeof v==="object" ? {cn:String(v.cn||v.en||""), en:String(v.en||v.cn||"")} : {cn:String(v),en:String(v)}) : null;
 
-  // colors：增加 ion 显色来源字段
+  // colors：双语 form/color/ion
   const colors = (Array.isArray(data.colors) ? data.colors : [])
     .map(x => {
-      if (!x || typeof x !== "object" || !x.form || !x.color) return null;
-      const ion = (x.ion === null || x.ion === undefined) ? null : String(x.ion);
+      if (!x || typeof x !== "object") return null;
+      const form = biStr(x.form), color = biStr(x.color);
+      if (!form || !color) return null;
+      const ion = (x.ion === null || x.ion === undefined) ? null : biStr(x.ion);
       return {
-        form: String(x.form),
-        color: String(x.color),
+        form, color,
         hex: (typeof x.hex === "string" && /^#[0-9a-fA-F]{3,6}$/.test(x.hex) ? x.hex : "#cccccc"),
         ion
       };
     })
     .filter(Boolean).slice(0, 8);
 
-  // redox：分类讨论氧化/还原性
+  // redox：双语 condition/behavior/detail
   const redox = (Array.isArray(data.redox) ? data.redox : [])
     .map(x => {
       if (!x || typeof x !== "object") return null;
       return {
-        condition: x.condition ? String(x.condition) : "未明确",
-        behavior: x.behavior ? String(x.behavior) : "无",
-        detail: x.detail ? String(x.detail) : ""
+        condition: biStr(x.condition) || {cn:"未明确",en:"unspecified"},
+        behavior: biStr(x.behavior) || {cn:"无",en:"none"},
+        detail: biStr(x.detail) || {cn:"",en:""}
       };
     })
     .filter(Boolean).slice(0, 6);
 
-  // solubility：分类溶解度
+  // solubility：双语 solvent/value/note
   const solubility = (Array.isArray(data.solubility) ? data.solubility : [])
     .map(x => {
       if (!x || typeof x !== "object") return null;
       return {
-        solvent: x.solvent ? String(x.solvent) : "水",
-        value: x.value ? String(x.value) : "未知",
-        note: x.note ? String(x.note) : ""
+        solvent: biStr(x.solvent) || {cn:"水",en:"water"},
+        value: biStr(x.value) || {cn:"未知",en:"unknown"},
+        note: biStr(x.note) || {cn:"",en:""}
       };
     })
     .filter(Boolean).slice(0, 6);
@@ -302,8 +306,11 @@ async function aiJudgeOnce(env, c) {
   return {
     ok: true,
     verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict) ? data.verdict : "conditional",
-    name: typeof data.name === "string" ? data.name : null,
-    notes: (Array.isArray(data.notes) ? data.notes : []).map(x => String(x) + tag).slice(0, 4),
+    name: biStr(data.name),
+    notes: (Array.isArray(data.notes) ? data.notes : []).map(x => {
+      const n = biStr(x);
+      return n ? {cn:n.cn+tagCn, en:n.en+tagEn} : null;
+    }).filter(Boolean).slice(0, 4),
     tags: (Array.isArray(data.tags) ? data.tags : []).filter(t => ["toxic", "corrosive", "explosive", "oxidize", "unstable", "charged"].includes(t)),
     related: Array.isArray(data.related) ? data.related.map(String).slice(0, 5) : [],
     colors: colors.length ? colors : undefined,
@@ -511,6 +518,19 @@ function firstTrust(s) {
   if (t.length > 30 && cnCount < 2) return undefined;
   return t;
 }
+// 双语名构建：优先 AI 的 {cn,en}，降级用各种来源拼凑
+function buildName(aiName, cnName, wikiCnTitle, localName, pubchemTitle) {
+  // aiName 可能是 {cn,en} 对象
+  if (aiName && typeof aiName === "object") {
+    const cn = aiName.cn || cnName || wikiCnTitle || localName || pubchemTitle || "";
+    const en = aiName.en || pubchemTitle || "";
+    return { cn: String(cn), en: String(en) };
+  }
+  // 降级：aiName 是字符串
+  const cn = (typeof aiName === "string" && aiName) || cnName || wikiCnTitle || localName || pubchemTitle || "";
+  const en = pubchemTitle || "";
+  return cn ? (en ? {cn:String(cn), en:String(en)} : String(cn)) : null;
+}
 function wikiNameCn(wiki) {
   if (!wiki?.zh) return undefined;
   // 对所有来源都过 firstTrust，剔除"XX列表/索引"等非物质条目
@@ -518,12 +538,12 @@ function wikiNameCn(wiki) {
 }
 function buildWarnings(tags) {
   const map = {
-    toxic: "⚠ 剧毒：避免接触与误食，操作戴防护，废液按规定处理。",
-    corrosive: "⚠ 腐蚀性：避免接触皮肤/眼睛，稀释时遵循安全顺序并通风。",
-    explosive: "⚠ 爆炸/强氧化：远离可燃物、还原剂、撞击与高温。",
-    oxidize: "⚠ 易氧化/强氧化：密封避光、隔绝空气保存。",
-    unstable: "⚠ 不稳定：受热、光照或久置易分解，现配现用。",
-    charged: "该式表示离子，需与反离子组成中性物质。"
+    toxic: {cn:"⚠ 剧毒：避免接触与误食，操作戴防护，废液按规定处理。", en:"⚠ Highly toxic: avoid contact and ingestion; wear PPE; dispose of waste per regulations."},
+    corrosive: {cn:"⚠ 腐蚀性：避免接触皮肤/眼睛，稀释时遵循安全顺序并通风。", en:"⚠ Corrosive: avoid skin/eye contact; follow safe dilution order with ventilation."},
+    explosive: {cn:"⚠ 爆炸/强氧化：远离可燃物、还原剂、撞击与高温。", en:"⚠ Explosive/strong oxidizer: keep away from combustibles, reducing agents, impact, and heat."},
+    oxidize: {cn:"⚠ 易氧化/强氧化：密封避光、隔绝空气保存。", en:"⚠ Easily oxidized/strong oxidizer: store sealed, away from light and air."},
+    unstable: {cn:"⚠ 不稳定：受热、光照或久置易分解，现配现用。", en:"⚠ Unstable: decomposes under heat, light, or prolonged storage; prepare fresh."},
+    charged: {cn:"该式表示离子，需与反离子组成中性物质。", en:"This formula represents an ion; a counter-ion is needed to form a neutral compound."}
   };
   const out = [];
   for (const t of (tags || [])) if (map[t]) out.push(map[t]);

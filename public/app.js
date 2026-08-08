@@ -230,6 +230,8 @@ async function doEquation(){
 // ────────────────────────── 渲染：判定报告 ──────────────────────────
 const HAZ_CN={ toxic:"剧毒", corrosive:"腐蚀", explosive:"爆炸", oxidize:"易氧化", unstable:"不稳定", charged:"带电" };
 const HAZ_EN={ toxic:"Toxic", corrosive:"Corrosive", explosive:"Explosive", oxidize:"Oxidizer", unstable:"Unstable", charged:"Charged" };
+// 双语字段读取：字符串或 {cn,en} 对象 → 按当前语言取值
+function bi(v){ return v ? (typeof v==="object" ? (lang==="en" ? (v.en||v.cn||"") : (v.cn||v.en||"")) : String(v)) : ""; }
 const SRC_CN={
   pubchem:"PubChem 联网证实", "workers-ai":"云端 AI（Qwen3-30B）",
   "knowledge-base":"本地知识库", "rule-fallback":"价键规则（联网不可用）",
@@ -284,54 +286,57 @@ function renderReport(res, raw, opts={}){
     `<div class="sec"><h4>${t("sec_hazards")}</h4><div class="hazards">`+
     res.hazards.map(tg=>hazMap[tg]?`<span class="haz haz-${tg}">${hazMap[tg]}</span>`:"").join("")+`</div></div>`:"";
   const warnsHtml=(res.warnings&&res.warnings.length && !opts.waiting)?
-    `<div class="sec"><h4>${t("sec_warnings")}</h4>`+res.warnings.map(w=>`<div class="warn">${escapeHtml(w)}</div>`).join("")+`</div>`:"";
+    `<div class="sec"><h4>${t("sec_warnings")}</h4>`+res.warnings.map(w=>`<div class="warn">${escapeHtml(bi(w))}</div>`).join("")+`</div>`:"";
   const notesHtml=(res.notes&&res.notes.length && !opts.waiting)?
-    `<div class="sec"><h4>${t("sec_notes")}</h4><ul class="note-list">`+res.notes.map(n=>`<li>${escapeHtml(n)}</li>`).join("")+`</ul></div>`:"";
+    `<div class="sec"><h4>${t("sec_notes")}</h4><ul class="note-list">`+res.notes.map(n=>`<li>${escapeHtml(bi(n))}</li>`).join("")+`</ul></div>`:"";
   const relatedHtml=(res.related&&res.related.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_related")}</h4><div class="related">`+res.related.map(r=>`<button class="rel" data-f="${r}">${prettyFormula(r)}</button>`).join("")+`</div></div>`:"";
   const colorsHtml=(res.colors&&res.colors.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_colors")}</h4><div class="colorrow">`+
-    res.colors.map(c=>`<span class="cchip"><span class="cdot" style="background:${c.hex||"#ccc"}"></span>${escapeHtml(c.form)}：${escapeHtml(c.color)}${c.ion?`<span class="cion">${t("lbl_ion")}：${escapeHtml(c.ion)}</span>`:""}</span>`).join("")+
+    res.colors.map(c=>`<span class="cchip"><span class="cdot" style="background:${c.hex||"#ccc"}"></span>${escapeHtml(bi(c.form))}：${escapeHtml(bi(c.color))}${c.ion?`<span class="cion">${t("lbl_ion")}：${escapeHtml(bi(c.ion))}</span>`:""}</span>`).join("")+
     `</div></div>`:"";
   const redoxHtml=(res.redox&&res.redox.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_redox")}</h4>`+
-    res.redox.map(r=>`<div class="rx-item"><span class="rx-cond">${escapeHtml(r.condition)}</span><span class="rx-behavior">${escapeHtml(r.behavior)}</span>${r.detail?`<span class="rx-detail">${escapeHtml(r.detail)}</span>`:""}</div>`).join("")+
+    res.redox.map(r=>`<div class="rx-item"><span class="rx-cond">${escapeHtml(bi(r.condition))}</span><span class="rx-behavior">${escapeHtml(bi(r.behavior))}</span>${r.detail?`<span class="rx-detail">${escapeHtml(bi(r.detail))}</span>`:""}</div>`).join("")+
     `</div>`:"";
   const solubilityHtml=(res.solubility&&res.solubility.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_solubility")}</h4>`+
-    res.solubility.map(s=>`<div class="sol-item"><span class="sol-solv">${escapeHtml(s.solvent)}</span><span class="sol-val">${escapeHtml(s.value)}</span>${s.note?`<span class="sol-note">${escapeHtml(s.note)}</span>`:""}</div>`).join("")+
+    res.solubility.map(s=>`<div class="sol-item"><span class="sol-solv">${escapeHtml(bi(s.solvent))}</span><span class="sol-val">${escapeHtml(bi(s.value))}</span>${s.note?`<span class="sol-note">${escapeHtml(bi(s.note))}</span>`:""}</div>`).join("")+
     `</div>`:"";
   const deepHtml = opts.deep ? `<div class="sec"><div class="loading">${t("loading_deep")}</div></div>` : "";
   const reportHtml = (!opts.waiting && res.source && res.source!=="knowledge-base") ?
     `<div class="sec"><button class="chip" id="report-btn">${t("report_btn")}</button><span class="rep-hint" id="report-hint"></span></div>` : "";
+
+  // verdict=no：只显示 stamp + 元素质量分数，隐藏其他所有区块
+  const isNo = res.verdict==="no" && !opts.waiting;
 
   resultBox.innerHTML=`
     <article class="report">
       <div class="report-head">
         <div>
           <div class="rep-formula">${prettyFormula(res.normalized||raw)}</div>
-          ${res.name?`<div class="rep-name">${escapeHtml(res.name)}</div>`:""}
+          ${(!isNo && res.name)?`<div class="rep-name">${escapeHtml(bi(res.name))}</div>`:""}
         </div>
         <div class="stamp ${stampCls}">${stampText}</div>
       </div>
-      <div class="meta">
+      ${isNo?"":`<div class="meta">
         <span><b>${t("meta_composition")}</b> <span class="el">${elementsHtml||"—"}</span></span>
         ${massHtml}
         ${chargeHtml}
         <span><b>${t("meta_source")}</b> ${srcText}</span>
-      </div>
-      ${radHtml}
+      </div>`}
+      ${isNo?"":radHtml}
       ${compHtml}
-      ${deepHtml}
-      ${hazHtml}
-      ${colorsHtml}
-      ${redoxHtml}
-      ${solubilityHtml}
-      ${warnsHtml}
-      ${notesHtml}
-      ${sourcesHtml}
-      ${relatedHtml}
-      ${reportHtml}
+      ${isNo?"":deepHtml}
+      ${isNo?"":hazHtml}
+      ${isNo?"":colorsHtml}
+      ${isNo?"":redoxHtml}
+      ${isNo?"":solubilityHtml}
+      ${isNo?"":warnsHtml}
+      ${isNo?"":notesHtml}
+      ${isNo?"":sourcesHtml}
+      ${isNo?"":relatedHtml}
+      ${isNo?"":reportHtml}
     </article>`;
   resultBox.querySelectorAll("button.rel").forEach(b=>b.addEventListener("click",()=>{ input.value=b.dataset.f; updatePreview(); doCheck(); }));
   const repBtn = resultBox.querySelector("#report-btn");
