@@ -54,6 +54,11 @@
 | 15 | 酸根结构识别 | 自动检测 16 种常见含氧酸根（硫酸根/硝酸根/磷酸根/高锰酸根等） | `radical` 字段 |
 | 16 | 待核实状态 | 未收录式联网判定期间显示"WAITING"虚线章戳+脉冲动画 | 前端 `opts.waiting` |
 | 17 | 深色主题+双语 | 一键切换明暗主题与中英文，偏好记忆 localStorage | `data-theme` / `data-lang` |
+| 18 | **氧化/还原性分类** | 按条件分类讨论（水中/酸性/碱性/加热等），AI 提示词强制输出 | `redox` 字段 |
+| 19 | **溶解度分类** | 按溶剂分类（水/乙醇/有机溶剂等），含具体数值 | `solubility` 字段 |
+| 20 | **颜色显色来源** | colors 增加 `ion` 字段，标注显色离子（如 `Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺`） | `colors[].ion` |
+| 21 | **统一结构化返回** | 所有字段必现，缺失填 `[]`/`null`；`tags` 改名 `hazards` | `normalizeResult()` |
+| 22 | **API 网关与限流** | 同源网页免费无限；外部调用需 `?key=` 且按 IP 限 50/天 | `apiGate()` + `api_usage` 表 |
 
 ---
 
@@ -81,12 +86,13 @@ chem-check/
 │   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎+酸根检测 (831 行, 浏览器/Worker 共用)
 │   └── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量+元素质量分数 (204 行, 含118元素原子量)
 ├── src/                         # Worker 端
-│   ├── worker.js                # 路由 + fallback 链编排 + AI 提示词 + 上报 (462 行)
+│   ├── worker.js                # 路由 + fallback 链 + AI 提示词 + API 网关(限流/key) + 结构化返回 (556 行)
 │   ├── chem-sources.js          # PubChem / Wikipedia 客户端 (145 行)
-│   ├── chem-cache.js            # D1 缓存(stale-while-revalidate) + 限流 (101 行)
+│   ├── chem-cache.js            # D1 缓存(stale-while-revalidate) + 上报限流 + API 限流 (122 行)
 │   └── chem-reactions.js        # 本地无机反应补全 + 状态符号 + 可逆 + 剂量变体 + 双水解 (257 行)
 ├── migrations/
-│   └── 0001_init.sql            # D1 schema：formula_cache + report_usage 两表
+│   ├── 0001_init.sql            # D1 schema：formula_cache + report_usage
+│   └── 0002_api_usage.sql       # D1 schema：api_usage（外部 API 限流计数）
 ├── wrangler.toml                # 部署配置（Worker+静态资源+AI+D1+自定义域名）
 ├── package.json                 # 仅 devDependency: wrangler
 ├── LICENSE                      # GPLv3
@@ -167,6 +173,12 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 16. **`buildWarnings` 曾返回嵌套数组**导致前端渲染异常。→ 现在必须是扁平字符串数组，改它时注意。
 17. **剂量变体只写物种、系数交给配平器**：变体表里的 `left`/`right` 只列化学式，系数由 `balanceEquation` 算，这样保证原子守恒、不会手写出不守恒的方程式。
 
+### API 网关与结构化返回类
+18. **`apiGate` 是 async 函数，调用处必须 `await`**。曾漏写 `await`，导致 `gate` 是 Promise、`gate.denied` 恒为 `undefined`（falsy），外部调用绕过了 key 校验和限流。→ `const gate = await apiGate(request, env, url)`，别漏 await。
+19. **`normalizeResult` 把 `tags` 改名 `hazards` 后，前端必须同步改**。曾只改后端没改前端，导致 hazards 区域不显示。→ `normalizeResult` 输出 `hazards`（从 `res.tags` 取值），前端 `renderReport` 要读 `res.hazards` 而非 `res.tags`。同理 `handleReport` 返回的 `result` 也要过 `normalizeResult`，否则上报刷新后前端拿到的还是旧 schema。
+20. **AI prompt 要求所有字段必现（含空数组）**。曾只描述"colors/redox/solubility"但 AI 偶尔省略字段，导致 `normalizeResult` 收到 `undefined`。→ prompt 里明确写"所有字段必须出现，即使为空数组 []，也不得省略"，并附正确示例（CuSO4）和错误示例（"× 省略 colors/redox/solubility 字段"），降低 AI 漏字段概率。
+21. **wrangler OAuth token 会过期且 refresh_token 可能同时失效**。在非交互环境（如 CI/沙箱）无法 `wrangler login`。→ 需设 `CLOUDFLARE_API_TOKEN` 环境变量，或交互式 `wrangler login`。token 过期时 `wrangler whoami` 报 "auth token has expired"。
+
 ---
 
 ## 七、🔑 需要注意的点（运维/合规/成本）
@@ -176,7 +188,7 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 - **内容合规**：化学内容含剧毒/爆炸/腐蚀信息，属教育用途。**README 和页面底部的免责声明别删**。面向国内大众时保留"安全提示"。
 - **国内访问**：Cloudflare 默认境外节点，大陆访问慢属正常（非故障）。要加速需 EdgeOne/DNSPod 回源或 China Network（需 ICP 备案）。详见 README「国内部署注意事项」。
 - **D1 缓存 14 天 TTL**：过期先返回旧值+后台刷新（stale-while-revalidate）。改判定逻辑后，旧缓存可能"复活"旧结论——必要时手动清缓存。
-- **限流规则**：上报接口每设备每日 ≤20 次、单化学式每日 ≤3 次，超限返回 429。设备指纹 = IP+UA 的 djb2 哈希（无 `did` 时）。
+- **限流规则**：上报接口每设备每日 ≤20 次、单化学式每日 ≤3 次，超限返回 429。设备指纹 = IP+UA 的 djb2 哈希（无 `did` 时）。外部 API 调用每 IP 每日 ≤50 次（同源网页查询不计）；需配置 `wrangler secret put API_KEYS`（逗号分隔多个 key），外部调用加 `?key=` 参数。
 
 ---
 
@@ -194,6 +206,13 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 - ✅ **酸根结构识别**（detectRadical，16 种含氧酸根，借鉴 Formula.zip analyzer 设计）
 - ✅ **待核实（WAITING）状态**（未收录式联网判定期间虚线章戳+脉冲动画）
 - ✅ **深色/浅色主题 + 中英双语切换**（data-theme/data-lang，localStorage 持久化）
+- ✅ **统一结构化返回**（normalizeResult：所有字段必现，缺失填 `[]`/`null`；`tags` 改名 `hazards`）
+- ✅ **AI prompt 修缮**（redox/colors.ion/solubility/hazards 全部必填；附 JSON schema + 正确示例 + 错误示例；max_tokens 提至 1800）
+- ✅ **氧化/还原性分类**（redox：按条件分类讨论，如水中 vs 酸性 vs 置换反应）
+- ✅ **溶解度分类**（solubility：按溶剂分类，含具体数值）
+- ✅ **颜色显色来源**（colors 增加 `ion` 字段，如 CuCl₂ 溶液蓝因 Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺）
+- ✅ **API 网关与限流**（同源网页免费无限；外部需 `?key=` 且 IP 限 50/天；api_usage 表计数）
+- ✅ **完整 API 调用教程**（README：限流规则 + key 配置 + 统一响应结构 + 调用示例 + 错误响应）
 - ✅ 生产实测：`AgOH`(知识库)、`CaCl2`(PubChem)、`K2FeO4`(PubChem+AI/高铁酸钾)、`Na2FeO4`(纯AI/高铁酸钠)、`CaCO3+H2SO4`(复分解+CO2↑)、`N2+H2⇌NH3`(可逆)、`AlCl3+Na2CO3`(双水解→2Al(OH)₃↓+3CO₂↑+6NaCl)、限流第4次被拦截，全部正确。
 
 **已知的待改进/小瑕疵**：
@@ -201,6 +220,7 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 - ⚠️ 前端 Google Fonts 国内加载慢，未做镜像/自托管。
 - ⚠️ 本地 `wrangler dev` 因 remote AI 起不来（见坑 #9），暂靠 Node 直测 + 线上验证。
 - ⚠️ 语言切换后方程式结果区不自动重渲染（仅判定结果会重渲染），需重新点配平按钮。
+- ⚠️ wrangler OAuth token 已过期（见坑 #21），需 `wrangler login` 或设 `CLOUDFLARE_API_TOKEN` 后重新部署。
 
 ---
 
@@ -232,4 +252,4 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 
 ---
 
-*最后更新：2026-08-07 · 维护者：tgcz2011*
+*最后更新：2026-08-08 · 维护者：tgcz2011*

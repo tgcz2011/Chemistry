@@ -2,7 +2,7 @@
 
 一个**网页版化学小工具**，能力一览：
 
-1. **物质存在性判定**：输入任意化学式，毫秒级判断“稳定存在 / 仅特定条件下存在 / 可生成但极不稳定 / 通常不存在”，给出注意事项、**颜色与形态**（如 CuCl₂ 固体棕黄、稀溶液蓝、浓溶液绿）、摩尔质量，并附 PubChem/维基百科来源链接。
+1. **物质存在性判定**：输入任意化学式，毫秒级判断"稳定存在 / 仅特定条件下存在 / 可生成但极不稳定 / 通常不存在"，给出注意事项、**颜色与形态**（含显色离子来源，如 CuCl₂ 溶液蓝色因 Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺）、**氧化/还原性**（分类讨论，如在水中 vs 酸性条件下）、**溶解度**（按溶剂分类）、危险信息、摩尔质量，并附 PubChem/维基百科来源链接。所有字段结构化固定输出，缺失填"无"。
 2. **化学方程式配平**：输入完整方程式（如 `KMnO4+HCl=KCl+MnCl2+H2O+Cl2`）用**代数法**自动配平（保证原子守恒，可处理氧化还原）。
 3. **反应补全 + 化学计量**：仅给反应物（如 `HCl+NaOH`，条件可留空）→ 本地规则或 **Workers AI** 补全产物并配平，返回完整方程式与各物质摩尔质量，并可“给某物质的量 → 算其余”。
 4. **状态符号与可逆**：产物自动标注沉淀 `↓`、气体 `↑`；可逆反应（如 `N₂+3H₂⇌2NH₃`、`CO₂+H₂O⇌H₂CO₃`）用 `⇌` 表示。
@@ -106,76 +106,134 @@ Cloudflare 的节点默认通过**中国大陆境外**（香港、日本、新�
 
 ---
 
-## API 用法
+## API 调用教程
 
-```
-GET /api/check?formula=<化学式>
-```
+### 访问方式与限流规则
 
-示例：
+| 调用方式 | 是否需要 API key | 限流 |
+|---------|:---:|------|
+| **网页查询**（同源 Origin/Referer 匹配站点域名） | 否 | 不限 |
+| **外部 API 调用**（跨域，如 curl / 其他网站 / 后端服务） | **是** | **同一 IP 每日 50 次** |
+
+> **网页查询不计入限流**——在 `chem-check.zztool.dpdns.org` 页面上查询是免费无限的。
+> 只有从外部（curl、脚本、其他网站后端）调用 API 才需要 key 并受 50 次/天/IP 限制。
+
+### 获取 API key
+
+API key 通过 Cloudflare Worker 环境变量 `API_KEYS` 配置（逗号分隔多个 key）：
 
 ```bash
-curl "https://chem-check.<子域>.workers.dev/api/check?formula=AgOH"
+# 设置 API key（在项目根目录执行，可设多个逗号分隔）
+wrangler secret put API_KEYS
+# 交互输入：my-key-abc123,another-key-456
 ```
 
-返回（节选）：
+外部调用时在 URL 加 `?key=<你的key>` 即可。
+
+### 接口列表
+
+| 接口 | 说明 |
+|------|------|
+| `GET /api/check?formula=X[&deep=1]` | 物质存在性判定（`deep=1` 触发联网兜底链） |
+| `GET /api/report?formula=X[&did=Y]` | 上报信息有误，强制联网重查并更新缓存 |
+| `GET /api/equation?input=..&condition=..` | 方程式配平 / 补全 / 化学计量 |
+| `GET /api/health` | 健康检查（无需 key） |
+
+### 统一响应结构
+
+所有 `/api/check` 和 `/api/report` 的返回都经过**结构化归一化**——所有字段必现，无资料填 `[]`（数组）或 `null`（标量），不会出现字段缺失的情况。
 
 ```json
 {
   "ok": true,
-  "normalized": "AgOH",
-  "name": "氢氧化银",
-  "verdict": "unstable",
+  "input": "CuSO4",
+  "normalized": "CuSO4",
+  "name": "硫酸铜",
+  "verdict": "yes",
   "confidence": "high",
-  "notes": ["氢氧化银在水中几乎不能独立存在……"],
-  "warnings": ["⚠ 不稳定：受热、光照或久置易分解，现配现用。"],
-  "tags": ["unstable", "oxidize"],
-  "related": ["Ag2O"]
+  "source": "pubchem",
+  "elements": { "Cu": 1, "S": 1, "O": 4 },
+  "charge": 0,
+  "mass": 159.609,
+  "composition": [
+    { "symbol": "Cu", "name": "铜", "count": 1, "massPct": 39.81 },
+    { "symbol": "S",  "name": "硫", "count": 1, "massPct": 20.09 },
+    { "symbol": "O",  "name": "氧", "count": 4, "massPct": 40.10 }
+  ],
+  "radical": null,
+  "hazards": ["toxic"],
+  "redox": [
+    { "condition": "在水中", "behavior": "无显著氧化还原性", "detail": "Cu²⁺ 较稳定" },
+    { "condition": "活泼金属置换", "behavior": "氧化性", "detail": "Cu²⁺ 可被 Zn/Fe 置换为 Cu" }
+  ],
+  "colors": [
+    { "form": "无水固体", "color": "白色", "hex": "#f4f4f0", "ion": null },
+    { "form": "水溶液", "color": "蓝色", "hex": "#2e6fd6", "ion": "Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺" }
+  ],
+  "solubility": [
+    { "solvent": "水", "value": "易溶", "note": "20°C 约 23g/100mL" },
+    { "solvent": "乙醇", "value": "微溶", "note": "难溶于无水乙醇" }
+  ],
+  "warnings": ["⚠ 剧毒：避免接触与误食..."],
+  "notes": ["无水硫酸铜为白色粉末，吸水后变蓝..."],
+  "sources": [{ "label": "PubChem CID 24462", "url": "https://pubchem.ncbi.nlm.nih.gov/compound/24462" }],
+  "related": ["CuSO4·5H2O", "Cu(OH)2", "BaCl2"],
+  "fromCache": false,
+  "stale": false,
+  "ruleNote": null
 }
 ```
 
-`verdict` 取值：`yes`(稳定存在) / `conditional`(仅特定条件存在) / `unstable`(可生成但极不稳定) / `no`(通常不存在)。
+**字段说明**：
 
-**深度判定（未收录物质，调用 Workers AI）**：在 `formula` 后加 `&deep=1`，例如：
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `verdict` | string | `yes`(稳定存在) / `conditional`(特定条件) / `unstable`(极不稳定) / `no`(通常不存在) |
+| `hazards` | string[] | 危险标签：`toxic`(剧毒) / `corrosive`(腐蚀) / `explosive`(爆炸) / `oxidize`(易氧化) / `unstable`(不稳定) / `charged`(带电)；无关则 `[]` |
+| `redox` | array | 氧化/还原性，**按条件分类**：`condition`(条件) + `behavior`(氧化性/还原性/歧化/无) + `detail`(具体描述)；无资料 `[]` |
+| `colors` | array | 颜色与形态，按形态分类：`form`(固体/水溶液/气体) + `color` + `hex`(色值) + `ion`(显色离子来源，如 `Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺`；物质整体显色则 `null`)；无资料 `[]` |
+| `solubility` | array | 溶解度，**按溶剂分类**：`solvent`(水/乙醇/...) + `value`(易溶/可溶/微溶/难溶/不溶) + `note`(具体数值)；无资料 `[]` |
+| `composition` | array | 元素质量分数：`symbol` + `name` + `count` + `massPct` |
+| `source` | string | `pubchem` / `workers-ai` / `knowledge-base` / `rule` / `rule-fallback` |
+| `fromCache` / `stale` | boolean | 是否来自 D1 缓存 / 是否过期(后台刷新中) |
 
-```bash
-curl "https://chem-check.zztool.dpdns.org/api/check?formula=CaCl2&deep=1"
-# → { "source":"workers-ai", "verdict":"yes", "name":"氯化钙", "notes":["常温下稳定，易吸湿"], ... }
-```
+### 调用示例
 
-### 方程式配平与计算
+**网页查询（同源，无需 key，无限）**：
+直接在 `https://chem-check.zztool.dpdns.org` 页面输入化学式即可。
 
-```
-GET /api/equation?input=<反应物或方程式>&condition=<可选条件>
-```
-
-- 完整方程式（本地代数配平）：
-
-```bash
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2"
-# → { "equation":"2KMnO₄ + 16HCl → 2KCl + 2MnCl₂ + 8H₂O + 5Cl₂", "mode":"balance", "species":[{formula,coeff,molarMass,name},...] }
-```
-
-- 仅反应物（本地规则或 AI 补全）：
+**外部 API 调用（需 key，50 次/天/IP）**：
 
 ```bash
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH"
+# 物质判定（含深度联网）
+curl "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&deep=1&key=my-key-abc123"
+
+# 方程式配平
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2&key=my-key-abc123"
+
+# 仅给反应物，AI 补全产物
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH&key=my-key-abc123"
 # → { "equation":"HCl + NaOH → NaCl + H₂O", "mode":"completion", "type":"酸碱中和" }
 
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=Fe%2BH2SO4"
-# → { "equation":"Fe + H₂SO₄ → FeSO₄ + H₂", "mode":"completion", "type":"置换", "ai":true }
-```
-
-- 双水解反应（本地规则自动识别）：
-
-```bash
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
+# 双水解反应（本地规则自动识别）
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3&key=my-key-abc123"
 # → { "equation":"2AlCl₃ + 3Na₂CO₃ + 3H₂O → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl", "type":"双水解" }
 ```
 
-返回中 `species` 含每种物质的 `coeff`（系数）与 `molarMass`（摩尔质量），前端据此做化学计量计算。
+**无 key 或 key 无效时的响应**：
 
-判定结果若来自联网，会附 `sources`（PubChem / 维基百科链接）、`source`（pubchem/workers-ai/knowledge-base/rule）、`fromCache` 等字段。
+```json
+// 401（缺少 key）
+{ "ok": false, "error": "外部 API 调用需要 API key。请在 URL 加 ?key=<你的key>。生成方式见 README「API 调用教程」。" }
+
+// 403（key 无效）
+{ "ok": false, "error": "API key 无效。" }
+
+// 429（超限）
+{ "ok": false, "error": "今日 API 调用已达上限（50 次/IP/天），请明日再试。", "limit": { "used": 50, "limit": 50 } }
+```
+
+429 响应附带 Header：`X-RateLimit-Limit: 50`、`X-RateLimit-Remaining: 0`、`X-RateLimit-Reset: <unix时间戳>`、`Retry-After: 86400`。
 
 **上报刷新**（结果有误时强制重查，限流）：
 
@@ -185,17 +243,22 @@ GET /api/report?formula=<化学式>&did=<设备ID，可省>
 # 限流：每设备每日 ≤20 次、单化学式每日 ≤3 次；超限返回 429
 ```
 
-还提供 `GET /api/health` 健康检查。
+还提供 `GET /api/health` 健康检查（无需 key）。
 
 ### D1 数据库
 
-本项目使用独立的 D1 数据库 `chem-check-cache`（缓存 + 上报限流），schema 在 `migrations/0001_init.sql`。首次部署需：
+本项目使用独立的 D1 数据库 `chem-check-cache`（缓存 + 上报限流 + API 限流），schema 在 `migrations/`。首次部署需：
 
 ```bash
 wrangler d1 create chem-check-cache           # 得到 database_id，填入 wrangler.toml
 wrangler d1 migrations apply chem-check-cache --remote   # 生产
 wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
 ```
+
+三张表：
+- `formula_cache` — 联网判定结果 + 方程式 AI 补全缓存（14 天 TTL）
+- `report_usage` — 上报限流计数（每设备每日 ≤20、单式 ≤3）
+- `api_usage` — 外部 API 调用限流计数（每 IP 每日 ≤50，同源网页查询不计）
 
 ---
 
@@ -225,12 +288,13 @@ chem-check/
 │   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 酸根检测（浏览器/Worker 共用）
 │   └── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
 ├── src/
-│   ├── worker.js         # Worker：路由 + fallback 链编排 + 上报限流 + AI 提示词
+│   ├── worker.js         # Worker：路由 + fallback 链 + AI 提示词 + API 网关(限流/key) + 结构化返回
 │   ├── chem-sources.js   # PubChem / Wikipedia 数据源客户端
-│   ├── chem-cache.js     # D1 缓存（stale-while-revalidate）+ 上报限流
+│   ├── chem-cache.js     # D1 缓存(stale-while-revalidate) + 上报限流 + API 限流
 │   └── chem-reactions.js # 本地无机反应补全引擎（中和/复分解/置换/双水解/剂量变体）
 ├── migrations/
-│   └── 0001_init.sql     # D1 schema（缓存 + 限流）
+│   ├── 0001_init.sql     # D1 schema：formula_cache + report_usage
+│   └── 0002_api_usage.sql # D1 schema：api_usage（外部 API 限流计数）
 ├── wrangler.toml         # 部署配置（Worker + 静态资源 + AI + D1 + 自定义域名）
 ├── package.json
 ├── LICENSE               # GPLv3

@@ -253,6 +253,21 @@ a.rel{ text-decoration:none; display:inline-block; }
 .cdot{ display:inline-block; width:14px; height:14px; border-radius:50%; border:1px solid var(--line-strong);
   vertical-align:-2px; margin-left:4px; flex:none; }
 td.f .cdot{ margin-left:8px; }
+.cion{ font-size:11px; color:var(--ink-2); border-left:1px solid var(--line); padding-left:7px; margin-left:2px; }
+
+/* —— 氧化/还原性（分类讨论） —— */
+.rx-item{ display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13.5px; }
+.rx-item:last-child{ border-bottom:none; }
+.rx-cond{ font-family:var(--mono); font-size:12px; color:var(--accent); white-space:nowrap; flex:none; }
+.rx-behavior{ font-weight:600; color:var(--ink); white-space:nowrap; }
+.rx-detail{ color:var(--ink-2); font-size:13px; }
+
+/* —— 溶解度（分类） —— */
+.sol-item{ display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13.5px; }
+.sol-item:last-child{ border-bottom:none; }
+.sol-solv{ font-family:var(--mono); font-size:12px; color:var(--indigo); white-space:nowrap; flex:none; min-width:48px; }
+.sol-val{ font-weight:600; color:var(--ink); white-space:nowrap; }
+.sol-note{ color:var(--ink-2); font-size:13px; }
 
 /* —— 可逆反应标记 —— */
 .revtag{ font-family:var(--mono); font-size:12px; color:var(--indigo); border:1px solid var(--indigo);

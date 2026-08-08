@@ -23,8 +23,9 @@ const I18N = {
     footer:"本地即时判定 · Workers AI 深度判定 · 代数配平与计量 · 教育用途，危险物质操作请遵循实验室规范",
     stamp:{ yes:"稳定存在", conditional:"特定条件", unstable:"极不稳定", no:"不存在", waiting:"待核实" },
     sec_composition:"元素质量分数", sec_radical:"结构特征",
-    sec_hazards:"危险信息", sec_colors:"颜色与形态", sec_warnings:"安全提示",
+    sec_hazards:"危险信息", sec_colors:"颜色与形态", sec_redox:"氧化/还原性", sec_solubility:"溶解度", sec_warnings:"安全提示",
     sec_notes:"说明与注意事项", sec_sources:"数据来源", sec_related:"相关物质",
+    lbl_ion:"显色来源", lbl_none:"无",
     meta_composition:"组成", meta_mass:"摩尔质量", meta_charge:"总电荷", meta_source:"判定来源",
     loading_deep:"联网深度判定中（PubChem / 维基 / AI）…",
     loading_eq:"正在配平 / 调用云端…",
@@ -50,8 +51,9 @@ const I18N = {
     footer:"Instant local · Workers AI deep · Algebraic balancing · For education — follow lab safety for hazardous substances",
     stamp:{ yes:"Exists", conditional:"Conditional", unstable:"Unstable", no:"Not found", waiting:"WAITING" },
     sec_composition:"Element Mass Fraction", sec_radical:"Structural Feature",
-    sec_hazards:"Hazards", sec_colors:"Color & Form", sec_warnings:"Safety",
+    sec_hazards:"Hazards", sec_colors:"Color & Form", sec_redox:"Redox Properties", sec_solubility:"Solubility", sec_warnings:"Safety",
     sec_notes:"Notes & Precautions", sec_sources:"Sources", sec_related:"Related",
+    lbl_ion:"Color source", lbl_none:"None",
     meta_composition:"Composition", meta_mass:"Molar mass", meta_charge:"Total charge", meta_source:"Source",
     loading_deep:"Online deep lookup (PubChem / Wiki / AI)…",
     loading_eq:"Balancing / calling cloud…",
@@ -278,9 +280,9 @@ function renderReport(res, raw, opts={}){
     `<div class="sec"><h4>${t("sec_sources")}</h4><div class="related">`+
     res.sources.map(s=>`<a class="rel" href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.label)} ↗</a>`).join("")+`</div></div>`:"";
 
-  const hazHtml=(res.tags&&res.tags.length && !opts.waiting)?
+  const hazHtml=(res.hazards&&res.hazards.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_hazards")}</h4><div class="hazards">`+
-    res.tags.map(tg=>hazMap[tg]?`<span class="haz haz-${tg}">${hazMap[tg]}</span>`:"").join("")+`</div></div>`:"";
+    res.hazards.map(tg=>hazMap[tg]?`<span class="haz haz-${tg}">${hazMap[tg]}</span>`:"").join("")+`</div></div>`:"";
   const warnsHtml=(res.warnings&&res.warnings.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_warnings")}</h4>`+res.warnings.map(w=>`<div class="warn">${escapeHtml(w)}</div>`).join("")+`</div>`:"";
   const notesHtml=(res.notes&&res.notes.length && !opts.waiting)?
@@ -289,8 +291,16 @@ function renderReport(res, raw, opts={}){
     `<div class="sec"><h4>${t("sec_related")}</h4><div class="related">`+res.related.map(r=>`<button class="rel" data-f="${r}">${prettyFormula(r)}</button>`).join("")+`</div></div>`:"";
   const colorsHtml=(res.colors&&res.colors.length && !opts.waiting)?
     `<div class="sec"><h4>${t("sec_colors")}</h4><div class="colorrow">`+
-    res.colors.map(c=>`<span class="cchip"><span class="cdot" style="background:${c.hex||"#ccc"}"></span>${escapeHtml(c.form)}：${escapeHtml(c.color)}</span>`).join("")+
+    res.colors.map(c=>`<span class="cchip"><span class="cdot" style="background:${c.hex||"#ccc"}"></span>${escapeHtml(c.form)}：${escapeHtml(c.color)}${c.ion?`<span class="cion">${t("lbl_ion")}：${escapeHtml(c.ion)}</span>`:""}</span>`).join("")+
     `</div></div>`:"";
+  const redoxHtml=(res.redox&&res.redox.length && !opts.waiting)?
+    `<div class="sec"><h4>${t("sec_redox")}</h4>`+
+    res.redox.map(r=>`<div class="rx-item"><span class="rx-cond">${escapeHtml(r.condition)}</span><span class="rx-behavior">${escapeHtml(r.behavior)}</span>${r.detail?`<span class="rx-detail">${escapeHtml(r.detail)}</span>`:""}</div>`).join("")+
+    `</div>`:"";
+  const solubilityHtml=(res.solubility&&res.solubility.length && !opts.waiting)?
+    `<div class="sec"><h4>${t("sec_solubility")}</h4>`+
+    res.solubility.map(s=>`<div class="sol-item"><span class="sol-solv">${escapeHtml(s.solvent)}</span><span class="sol-val">${escapeHtml(s.value)}</span>${s.note?`<span class="sol-note">${escapeHtml(s.note)}</span>`:""}</div>`).join("")+
+    `</div>`:"";
   const deepHtml = opts.deep ? `<div class="sec"><div class="loading">${t("loading_deep")}</div></div>` : "";
   const reportHtml = (!opts.waiting && res.source && res.source!=="knowledge-base") ?
     `<div class="sec"><button class="chip" id="report-btn">${t("report_btn")}</button><span class="rep-hint" id="report-hint"></span></div>` : "";
@@ -315,6 +325,8 @@ function renderReport(res, raw, opts={}){
       ${deepHtml}
       ${hazHtml}
       ${colorsHtml}
+      ${redoxHtml}
+      ${solubilityHtml}
       ${warnsHtml}
       ${notesHtml}
       ${sourcesHtml}

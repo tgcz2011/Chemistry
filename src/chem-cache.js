@@ -72,6 +72,27 @@ export async function setEqCached(env, key, result){
   }catch{ /* 忽略 */ }
 }
 
+// ---- 外部 API 调用限流：同一 IP 每日 ≤ 50 次（网页同源查询不计）----
+const API_DAILY_LIMIT = 50;
+export async function checkAndIncrApi(env, ip){
+  if(!env?.DB || !ip) return { allowed:true, used:0, limit:API_DAILY_LIMIT };
+  const today = new Date().toISOString().slice(0,10);
+  try{
+    const row = await env.DB.prepare(
+      "SELECT count FROM api_usage WHERE ip=? AND usage_date=?"
+    ).bind(ip, today).first();
+    const used = Number(row?.count)||0;
+    if(used >= API_DAILY_LIMIT) return { allowed:false, used, limit:API_DAILY_LIMIT };
+    await env.DB.prepare(
+      "INSERT INTO api_usage (ip, usage_date, count) VALUES (?,?,1) " +
+      "ON CONFLICT(ip, usage_date) DO UPDATE SET count=count+1"
+    ).bind(ip, today).run();
+    return { allowed:true, used:used+1, limit:API_DAILY_LIMIT };
+  }catch{
+    return { allowed:true, used:0, limit:API_DAILY_LIMIT };
+  }
+}
+
 // ---- 上报限流：同一设备每日 ≤ 20 次、单化学式每日 ≤ 3 次 ----
 const DAILY_TOTAL = 20;
 const DAILY_FORMULA = 3;

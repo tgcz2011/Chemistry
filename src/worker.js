@@ -11,7 +11,7 @@
 import { analyze, prettyFormula, detectRadical } from "../public/chem-engine.js";
 import { balanceEquation, parseEquation, molarMass, prettyEquation, compositionMassPct } from "../public/chem-calc.js";
 import { searchPubChem, pubchemChineseName, searchWiki, searchWikiByName } from "./chem-sources.js";
-import { getCached, setCached, checkAndIncrReport, getEqCached, setEqCached } from "./chem-cache.js";
+import { getCached, setCached, checkAndIncrReport, checkAndIncrApi, getEqCached, setEqCached } from "./chem-cache.js";
 import { localCompleteReaction, lookupDosage, annotateStates, isReversible } from "./chem-reactions.js";
 
 const AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
@@ -24,6 +24,12 @@ export default {
     try {
       if (path === "/api/health") {
         return json({ ok: true, service: "chem-check", ai: !!env.AI, db: !!env.DB, time: Date.now() });
+      }
+      // 业务 API：网页同源查询免费无限；外部跨域调用需 API key 且按 IP 限 50/天
+      const isApiPath = path.startsWith("/api/check") || path.startsWith("/api/report") || path.startsWith("/api/equation");
+      if (isApiPath) {
+        const gate = await apiGate(request, env, url);
+        if (gate.denied) return gate.resp;
       }
       if (path === "/api/check") {
         const formula = url.searchParams.get("formula") || "";
@@ -71,19 +77,19 @@ async function handleCheck(formula, deep, env, ctx) {
   // 1) 本地知识库命中 → 毫秒返回
   if (local.confidence === "high") {
     local.source = "knowledge-base";
-    return json(local);
+    return json(normalizeResult(local));
   }
   // 未收录但未要求 deep → 仅返回本地规则推断
   if (!deep) {
     local.source = "rule";
-    return json(local);
+    return json(normalizeResult(local));
   }
 
   // 2) D1 缓存
   const cached = await getCached(env, formula);
   if (cached) {
     if (!cached.stale) {
-      return json({ ...cached.result, fromCache: true });
+      return json(normalizeResult({ ...cached.result, fromCache: true }));
     }
     // 过期：先返回旧值，后台联网刷新
     if (ctx && ctx.waitUntil) {
@@ -91,7 +97,7 @@ async function handleCheck(formula, deep, env, ctx) {
         try { const fresh = await enrichOnline(local, env); await setCached(env, formula, fresh); } catch (e) {}
       })());
     }
-    return json({ ...cached.result, fromCache: true, stale: true });
+    return json(normalizeResult({ ...cached.result, fromCache: true, stale: true }));
   }
 
   // 3) 联网：PubChem → Wiki → AI
@@ -100,7 +106,7 @@ async function handleCheck(formula, deep, env, ctx) {
   if (result.source !== "rule-fallback" && ctx && ctx.waitUntil) {
     ctx.waitUntil(setCached(env, formula, result));
   }
-  return json(result);
+  return json(normalizeResult(result));
 }
 
 // 上报：信息有误 → 限流后强制联网重查并更新缓存
@@ -124,7 +130,7 @@ async function handleReport(formula, did, request, env, ctx) {
   if (result.source !== "rule-fallback" && ctx && ctx.waitUntil) {
     ctx.waitUntil(setCached(env, formula, result));
   }
-  return json({ ok: true, result, limit: { dailyUsed: limit.dailyUsed, dailyLimit: limit.dailyLimit, formulaUsed: limit.formulaUsed, formulaLimit: limit.formulaLimit } });
+  return json({ ok: true, result: normalizeResult(result), limit: { dailyUsed: limit.dailyUsed, dailyLimit: limit.dailyLimit, formulaUsed: limit.formulaUsed, formulaLimit: limit.formulaLimit } });
 }
 
 // 设备指纹兜底：无 did 时用 IP + UA 的 djb2 哈希
@@ -164,6 +170,7 @@ async function enrichOnline(local, env) {
       name, verdict: "yes", confidence: "high", source: "pubchem", sources,
       notes, warnings: buildWarnings(ai?.tags || []), tags: ai?.tags || [], related: ai?.related || [],
       colors: (ai && ai.colors) || local.colors || null,
+      redox: ai?.redox || null, solubility: ai?.solubility || null,
       mass: top.molecularWeight || mass, ruleNote: local.ruleNote,
       radical: local.radical, composition: local.composition
     };
@@ -182,6 +189,7 @@ async function enrichOnline(local, env) {
       verdict: ai.verdict, confidence: "ai", source: "workers-ai", sources,
       notes: ai.notes, warnings: buildWarnings(ai.tags), tags: ai.tags, related: ai.related,
       colors: ai.colors || local.colors || null,
+      redox: ai.redox || null, solubility: ai.solubility || null,
       mass, ruleNote: local.ruleNote,
       radical: local.radical, composition: local.composition
     };
@@ -207,7 +215,7 @@ async function aiJudgeSubstance(env, c) {
 async function aiJudgeOnce(env, c) {
   const elems = Object.entries(c.composition || {}).map(([k, v]) => `${k}×${v}`).join(", ");
   const isIon = (c.charge ?? 0) !== 0;
-  const ionLine = isIon ? `\n重要：该式带电荷 ${c.charge > 0 ? "+" : ""}${c.charge}，是离子而非中性物质，请给出该离子的性质（颜色、检验反应、与沉淀剂/氧化剂反应等）。` : "";
+  const ionLine = isIon ? `\n重要：该式带电荷 ${c.charge > 0 ? "+" : ""}${c.charge}，是离子而非中性物质，颜色/氧化还原/溶解度请针对该离子描述。` : "";
 
   const facts = [];
   if (c.pubchem?.name) facts.push(`PubChem 已证实该化学式存在（CID ${c.pubchem.cid}），名称 ${c.pubchem.name}${c.pubchem.isomers ? `，共 ${c.pubchem.isomers} 种同分异构体` : ""}。`);
@@ -217,22 +225,89 @@ async function aiJudgeOnce(env, c) {
   if (c.localHints?.length) facts.push(`本地价态分析：${c.localHints.join("；")}。`);
 
   const system =
-    "你是严谨的化学专家。基于已给事实，判断该化学物质并输出 JSON。结构：" +
-    '{"verdict":"yes|conditional|unstable|no","name":"规范中文名","notes":["注意事项1"],"tags":["toxic|corrosive|explosive|oxidize|unstable|charged"],"related":["相关化学式"],"colors":[{"form":"固体","color":"白色","hex":"#f4f4f0"}]}。' +
-    "verdict 含义：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。" +
-    "要求：基于事实下明确结论，不要堆砌“可能/也许”；notes 给 2-4 条具体可操作的中文注意事项（稳定性/保存/毒性/反应性/制取）；name 必须是规范中文名（按无机命名规则推算，如 某酸某/某化某/高某酸某），不要直接抄英文 IUPAC 名；" +
-    "colors 按形态给出颜色（固体/晶体/水溶液/气体等），每项含 form(形态)、color(中文颜色)、hex(最接近的十六进制色值)；无色则 color 写“无色”、hex 用 #f6f6f2；无资料可给空数组；" +
-    "重要：PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐（如 K2MnO4、Na2FeO4）在 PubChem 中可能搜不到但确实存在，请结合价态与你的知识判断；tags 只能从给定集合选，无关则空数组；只输出 JSON，不要思考过程或 markdown。";
+    "你是严谨的化学专家。基于已给事实判断该化学物质，只输出一个 JSON 对象（禁止 markdown、禁止思考过程、禁止解释文字）。\n\n" +
+    "【JSON 结构（所有字段必须出现，无资料给空数组 []，不得省略任何字段）】\n" +
+    "{\n" +
+    '  "verdict": "yes|conditional|unstable|no",\n' +
+    '  "name": "规范中文名",\n' +
+    '  "notes": ["2-4条具体可操作的中文注意事项"],\n' +
+    '  "tags": ["危险标签"],\n' +
+    '  "related": ["相关化学式"],\n' +
+    '  "colors": [{"form":"形态","color":"中文颜色","hex":"#十六进制色值","ion":null}],\n' +
+    '  "redox": [{"condition":"条件","behavior":"氧化性|还原性|歧化|无","detail":"具体描述"}],\n' +
+    '  "solubility": [{"solvent":"溶剂","value":"易溶|可溶|微溶|难溶|不溶","note":"具体数值或说明"}]\n' +
+    "}\n\n" +
+    "【字段规则】\n" +
+    "verdict：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。\n" +
+    "name：规范中文名（按无机命名规则推算，如 某酸某/某化某/高某酸某），不要直接抄英文 IUPAC 名。\n" +
+    "notes：2-4 条具体注意事项（稳定性/保存/毒性/反应性/制取），每条一句完整中文，不要过于简略。\n" +
+    "tags：只能从 toxic|corrosive|explosive|oxidize|unstable|charged 中选，无关则给空数组 []。\n" +
+    "related：相关化学式，最多 5 个，无则空数组。\n" +
+    "colors：按形态分类（固体/晶体/水溶液/气体等）；无色写 color=\"无色\"、hex=\"#f6f6f2\"；" +
+    "ion 填导致该颜色的离子/物种（如 \"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺\"、\"MnO₄⁻\"、\"Fe³⁺\" 等），若颜色来自物质整体而非特定离子则填 null；无资料给空数组。\n" +
+    "redox：按条件分类讨论氧化/还原性（如 在水中、在酸性条件下、在碱性条件下、加热时等）；" +
+    "behavior 从「氧化性/还原性/歧化/既氧化又还原/无显著氧化还原性」中选；detail 给具体描述（如 能氧化I⁻为I₂、被KMnO₄氧化等）；无资料给空数组。\n" +
+    "solubility：按溶剂分类（水、乙醇、丙酮、苯等）；value 从「易溶/可溶/微溶/难溶/不溶」中选；" +
+    "note 给具体数值（如 20°C 约 23g/100mL）或反应说明（如 遇水分解）；无资料给空数组。\n\n" +
+    "【重要原则】\n" +
+    "1. PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐（如 K2MnO4、Na2FeO4）在 PubChem 中可能搜不到但确实存在，请结合价态与你的知识判断。\n" +
+    "2. 基于事实下明确结论，不要堆砌“可能/也许”。\n" +
+    "3. 所有字段必须出现，即使为空数组 []，也不得省略。\n" +
+    "4. 只输出 JSON，不要任何解释文字。\n\n" +
+    "【正确示例 - CuSO4】\n" +
+    '{"verdict":"yes","name":"硫酸铜","notes":["无水硫酸铜为白色粉末，吸水后变蓝，可作干燥剂。","五水合物 CuSO4·5H2O 俗称胆矾，蓝色晶体。","重金属盐有毒，避免误食，废液按含铜废液处理。"],"tags":["toxic"],"related":["CuSO4·5H2O","Cu(OH)2","BaCl2"],"colors":[{"form":"无水固体","color":"白色","hex":"#f4f4f0","ion":null},{"form":"水溶液","color":"蓝色","hex":"#2e6fd6","ion":"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺"}],"redox":[{"condition":"在水中","behavior":"无显著氧化还原性","detail":"Cu²⁺ 较稳定，不氧化水。"},{"condition":"活泼金属置换","behavior":"氧化性","detail":"Cu²⁺ 可被 Zn/Fe 置换为 Cu 单质。"}],"solubility":[{"solvent":"水","value":"易溶","note":"20°C 约 23g/100mL"},{"solvent":"乙醇","value":"微溶","note":"难溶于无水乙醇"}]}\n\n' +
+    "【错误示例（禁止这样做）】\n" +
+    "× 省略 colors/redox/solubility 字段\n" +
+    "× color 写\"蓝色\"但不给 ion 来源\n" +
+    "× redox 只写一条\"具有氧化性\"不分条件\n" +
+    "× solubility 只写\"可溶于水\"不分溶剂\n" +
+    "× notes 写\"有毒\"过于简略";
 
   const user = `化学式：${c.formula}\n元素组成：${elems}\n近似摩尔质量：${mass2(c.mass)} g/mol${ionLine}\n\n已知事实：\n${facts.join("\n")}\n\n请输出 JSON。`;
 
-  const raw = await runAI(env, { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 1200 });
+  const raw = await runAI(env, { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 1800 });
   const data = extractJSON(raw, "verdict");
   if (!data) return null;
   const tag = "（AI 推断，仅供参考）";
+
+  // colors：增加 ion 显色来源字段
   const colors = (Array.isArray(data.colors) ? data.colors : [])
-    .map(x => (x && typeof x === "object" && x.form && x.color) ? { form: String(x.form), color: String(x.color), hex: (typeof x.hex === "string" && /^#[0-9a-fA-F]{3,6}$/.test(x.hex) ? x.hex : "#cccccc") } : null)
+    .map(x => {
+      if (!x || typeof x !== "object" || !x.form || !x.color) return null;
+      const ion = (x.ion === null || x.ion === undefined) ? null : String(x.ion);
+      return {
+        form: String(x.form),
+        color: String(x.color),
+        hex: (typeof x.hex === "string" && /^#[0-9a-fA-F]{3,6}$/.test(x.hex) ? x.hex : "#cccccc"),
+        ion
+      };
+    })
+    .filter(Boolean).slice(0, 8);
+
+  // redox：分类讨论氧化/还原性
+  const redox = (Array.isArray(data.redox) ? data.redox : [])
+    .map(x => {
+      if (!x || typeof x !== "object") return null;
+      return {
+        condition: x.condition ? String(x.condition) : "未明确",
+        behavior: x.behavior ? String(x.behavior) : "无",
+        detail: x.detail ? String(x.detail) : ""
+      };
+    })
     .filter(Boolean).slice(0, 6);
+
+  // solubility：分类溶解度
+  const solubility = (Array.isArray(data.solubility) ? data.solubility : [])
+    .map(x => {
+      if (!x || typeof x !== "object") return null;
+      return {
+        solvent: x.solvent ? String(x.solvent) : "水",
+        value: x.value ? String(x.value) : "未知",
+        note: x.note ? String(x.note) : ""
+      };
+    })
+    .filter(Boolean).slice(0, 6);
+
   return {
     ok: true,
     verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict) ? data.verdict : "conditional",
@@ -240,7 +315,9 @@ async function aiJudgeOnce(env, c) {
     notes: (Array.isArray(data.notes) ? data.notes : []).map(x => String(x) + tag).slice(0, 4),
     tags: (Array.isArray(data.tags) ? data.tags : []).filter(t => ["toxic", "corrosive", "explosive", "oxidize", "unstable", "charged"].includes(t)),
     related: Array.isArray(data.related) ? data.related.map(String).slice(0, 5) : [],
-    colors: colors.length ? colors : undefined
+    colors: colors.length ? colors : undefined,
+    redox: redox.length ? redox : undefined,
+    solubility: solubility.length ? solubility : undefined
   };
 }
 
@@ -461,6 +538,90 @@ function buildWarnings(tags) {
   for (const t of (tags || [])) if (map[t]) out.push(map[t]);
   return out;
 }
-function json(data, status) {
-  return new Response(JSON.stringify(data), { status: status || 200, headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" } });
+function json(data, status, headers) {
+  return new Response(JSON.stringify(data), {
+    status: status || 200,
+    headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*", ...(headers || {}) }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// API 网关：同源网页查询免费无限；外部跨域调用需 ?key= 且按 IP 限 50/天
+// ---------------------------------------------------------------------------
+function sameOrigin(request, url) {
+  const origin = request.headers.get("Origin") || "";
+  const referer = request.headers.get("Referer") || "";
+  const host = url.host;
+  if (origin) {
+    try { return new URL(origin).host === host; } catch { /* fallthrough */ }
+  }
+  if (referer) {
+    try { return new URL(referer).host === host; } catch { /* fallthrough */ }
+  }
+  return false;
+}
+
+async function apiGate(request, env, url) {
+  // 1) 同源（网页查询）→ 放行，不计限流
+  if (sameOrigin(request, url)) return { denied: false };
+  // 2) 外部跨域调用 → 必须带有效 API key
+  const key = (url.searchParams.get("key") || "").trim();
+  if (!key) {
+    return {
+      denied: true,
+      resp: json({ ok: false, error: "外部 API 调用需要 API key。请在 URL 加 ?key=<你的key>。生成方式见 README「API 调用教程」。" }, 401)
+    };
+  }
+  const validKeys = (env.API_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
+  if (!validKeys.length || !validKeys.includes(key)) {
+    return { denied: true, resp: json({ ok: false, error: "API key 无效。" }, 403) };
+  }
+  // 3) 按 IP 限流 50/天
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+  const limit = await checkAndIncrApi(env, ip);
+  if (!limit.allowed) {
+    return {
+      denied: true,
+      resp: json({ ok: false, error: `今日 API 调用已达上限（${limit.limit} 次/IP/天），请明日再试。`, limit }, 429, {
+        "X-RateLimit-Limit": String(limit.limit),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 86400),
+        "Retry-After": "86400"
+      })
+    };
+  }
+  return { denied: false, limit };
+}
+
+// ---------------------------------------------------------------------------
+// 统一结构化返回：所有字段必现，缺失填"无"/[]（降低前端判空与 AI 漏字段风险）
+// ---------------------------------------------------------------------------
+function normalizeResult(res) {
+  if (!res || res.ok === false) return res;
+  const none = (arr) => Array.isArray(arr) && arr.length ? arr : [];
+  return {
+    ok: true,
+    input: res.input || "",
+    normalized: res.normalized || "",
+    name: res.name || "无",
+    verdict: res.verdict || "conditional",
+    confidence: res.confidence || "medium",
+    source: res.source || "rule",
+    elements: res.elements || {},
+    charge: res.charge ?? 0,
+    mass: (res.mass && isFinite(res.mass)) ? res.mass : null,
+    composition: none(res.composition),
+    radical: res.radical || null,
+    hazards: none(res.tags),                      // 危险信息（原 tags 重命名）
+    redox: none(res.redox),                       // 氧化/还原性（分类讨论）
+    colors: none(res.colors),                     // 颜色（每项含 ion 显色来源）
+    solubility: none(res.solubility),             // 溶解度（分类）
+    warnings: none(res.warnings),
+    notes: none(res.notes),
+    sources: none(res.sources),
+    related: none(res.related),
+    fromCache: res.fromCache || false,
+    stale: res.stale || false,
+    ruleNote: res.ruleNote || null
+  };
 }
