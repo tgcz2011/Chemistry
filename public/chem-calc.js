@@ -1,7 +1,7 @@
 // chem-calc.js — 化学计算模块（摩尔质量 + 方程式代数配平）
 // 依赖 chem-engine.js 的 parseFormula（元素计数解析）
 
-import { parseFormula } from "./chem-engine.js";
+import { parseFormula, ELEMENTS } from "./chem-engine.js";
 
 // 标准原子量（合成元素取近似值）
 export const ATOMIC_MASS = {
@@ -29,6 +29,26 @@ export function molarMass(formula){
     m += w * p.elements[sym];
   }
   return m;
+}
+
+// 元素组成 + 质量分数（借鉴 Formula.zip 的 element massPct 展示）
+// 返回 [{symbol, count, mass, massPct}]，按原子数降序；无法计算质量时返回 null
+export function compositionMassPct(formula){
+  const p = parseFormula(formula);
+  if(!p.ok) return null;
+  const els = p.elements;
+  const rows = [];
+  let total = 0;
+  for(const sym of Object.keys(els)){
+    const w = ATOMIC_MASS[sym];
+    if(w==null) return null;
+    const mass = w*els[sym];
+    total += mass;
+    rows.push({ symbol:sym, name:ELEMENTS[sym]?ELEMENTS[sym].zh:"", nameEn:ELEMENTS[sym]?ELEMENTS[sym].en:"", count:els[sym], mass:+mass });
+  }
+  if(total<=0) return null;
+  rows.sort((a,b)=>b.count-a.count || a.mass-b.mass);
+  return rows.map(r=>({ ...r, massPct:+(r.mass/total*100).toFixed(2) }));
 }
 
 // 解析方程式："a+b = c+d" / "a+b -> c+d" / 仅反应物 "a+b"

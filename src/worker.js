@@ -8,8 +8,8 @@
 //   GET /api/health                     健康检查
 //   其余                                静态站点（public/）
 
-import { analyze, prettyFormula } from "../public/chem-engine.js";
-import { balanceEquation, parseEquation, molarMass, prettyEquation } from "../public/chem-calc.js";
+import { analyze, prettyFormula, detectRadical } from "../public/chem-engine.js";
+import { balanceEquation, parseEquation, molarMass, prettyEquation, compositionMassPct } from "../public/chem-calc.js";
 import { searchPubChem, pubchemChineseName, searchWiki, searchWikiByName } from "./chem-sources.js";
 import { getCached, setCached, checkAndIncrReport, getEqCached, setEqCached } from "./chem-cache.js";
 import { localCompleteReaction, lookupDosage, annotateStates, isReversible } from "./chem-reactions.js";
@@ -66,6 +66,7 @@ async function handleCheck(formula, deep, env, ctx) {
   const local = analyze(formula);
   if (!local.ok) return json(local, 400);
   local.mass = molarMass(local.normalized) || undefined;
+  local.composition = compositionMassPct(local.normalized) || undefined;
 
   // 1) 本地知识库命中 → 毫秒返回
   if (local.confidence === "high") {
@@ -118,6 +119,7 @@ async function handleReport(formula, did, request, env, ctx) {
     return json({ ok: false, error: msg, limited: true, limit }, 429);
   }
   local.mass = molarMass(local.normalized) || undefined;
+  local.composition = compositionMassPct(local.normalized) || undefined;
   const result = await enrichOnline(local, env);
   if (result.source !== "rule-fallback" && ctx && ctx.waitUntil) {
     ctx.waitUntil(setCached(env, formula, result));
@@ -162,7 +164,8 @@ async function enrichOnline(local, env) {
       name, verdict: "yes", confidence: "high", source: "pubchem", sources,
       notes, warnings: buildWarnings(ai?.tags || []), tags: ai?.tags || [], related: ai?.related || [],
       colors: (ai && ai.colors) || local.colors || null,
-      mass: top.molecularWeight || mass, ruleNote: local.ruleNote
+      mass: top.molecularWeight || mass, ruleNote: local.ruleNote,
+      radical: local.radical, composition: local.composition
     };
   }
 
@@ -179,7 +182,8 @@ async function enrichOnline(local, env) {
       verdict: ai.verdict, confidence: "ai", source: "workers-ai", sources,
       notes: ai.notes, warnings: buildWarnings(ai.tags), tags: ai.tags, related: ai.related,
       colors: ai.colors || local.colors || null,
-      mass, ruleNote: local.ruleNote
+      mass, ruleNote: local.ruleNote,
+      radical: local.radical, composition: local.composition
     };
   }
 

@@ -664,6 +664,31 @@ export const COLORS = {
 };
 
 // ---------------------------------------------------------------------------
+// 酸根 / 官能团结构检测（按元素组成识别常见含氧酸根，供展示）
+// 借鉴 Formula.zip analyzer.ts 的 detectCommonRadical
+// ---------------------------------------------------------------------------
+export function detectRadical(parsed){
+  const c = parsed.elements || {};
+  const get = (s)=>c[s]||0;
+  if(get("S")===1 && get("O")===4) return {cn:"含硫酸根 SO₄²⁻ 结构",en:"Sulfate SO₄²⁻"};
+  if(get("S")===1 && get("O")===3) return {cn:"含亚硫酸根 SO₃²⁻ 结构",en:"Sulfite SO₃²⁻"};
+  if(get("N")===1 && get("O")===3) return {cn:"含硝酸根 NO₃⁻ 结构",en:"Nitrate NO₃⁻"};
+  if(get("N")===1 && get("O")===2) return {cn:"含亚硝酸根 NO₂⁻ 结构",en:"Nitrite NO₂⁻"};
+  if(get("P")===1 && get("O")===4) return {cn:"含磷酸根 PO₄³⁻ 结构",en:"Phosphate PO₄³⁻"};
+  if(get("Cl")===1 && get("O")===4) return {cn:"含高氯酸根 ClO₄⁻ 结构",en:"Perchlorate ClO₄⁻"};
+  if(get("Cl")===1 && get("O")===3) return {cn:"含氯酸根 ClO₃⁻ 结构",en:"Chlorate ClO₃⁻"};
+  if(get("Cl")===1 && get("O")===2) return {cn:"含亚氯酸根 ClO₂⁻ 结构",en:"Chlorite ClO₂⁻"};
+  if(get("Cl")===1 && get("O")===1) return {cn:"含次氯酸根 ClO⁻ 结构",en:"Hypochlorite ClO⁻"};
+  if(get("C")===1 && get("O")===3) return {cn:"含碳酸根 CO₃²⁻ 结构",en:"Carbonate CO₃²⁻"};
+  if(get("Mn")===1 && get("O")===4) return {cn:"含高锰酸根 MnO₄⁻ 结构",en:"Permanganate MnO₄⁻"};
+  if(get("Cr")===1 && get("O")===4) return {cn:"含铬酸根 CrO₄²⁻ 结构",en:"Chromate CrO₄²⁻"};
+  if(get("Br")===1 && get("O")===3) return {cn:"含溴酸根 BrO₃⁻ 结构",en:"Bromate BrO₃⁻"};
+  if(get("I")===1 && get("O")===3) return {cn:"含碘酸根 IO₃⁻ 结构",en:"Iodate IO₃⁻"};
+  if(get("I")===1 && get("O")===4) return {cn:"含高碘酸根 IO₄⁻ 结构",en:"Periodate IO₄⁻"};
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // 主分析：综合知识库 + 规则
 // ---------------------------------------------------------------------------
 export function analyze(raw){
@@ -721,6 +746,7 @@ export function analyze(raw){
     tags,
     related,
     colors: (known && known.colors) || COLORS[normKey] || COLORS[parsed.raw] || null,
+    radical: detectRadical(parsed),
     ruleNote: rule.note
   };
 }

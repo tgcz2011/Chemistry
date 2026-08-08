@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="cn">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,38 +17,46 @@
   <header class="masthead">
     <div class="mast-left">
       <span class="doc-no">CR·01</span>
-      <span class="brand">化学式速查</span>
+      <span class="brand" data-i18n="brand">化学式速查</span>
       <span class="brand-en">CHEMICAL ASSAY SHEET</span>
     </div>
-    <a class="mast-link" href="/api/health" target="_blank" rel="noopener">API ↗</a>
+    <div class="mast-right">
+      <button class="toggle-btn" id="lang-toggle" title="切换语言 / Switch language">
+        <span class="seg"><span class="on">中</span><span>EN</span></span>
+      </button>
+      <button class="toggle-btn" id="theme-toggle" title="切换主题 / Switch theme">
+        <span class="seg"><span class="on">☀</span><span>☾</span></span>
+      </button>
+      <a class="mast-link" href="/api/health" target="_blank" rel="noopener">API ↗</a>
+    </div>
   </header>
   <hr class="rule" />
 
   <section class="hero">
-    <p class="eyebrow">存在性判定 · 方程式配平 · 化学计量</p>
-    <h1>这个化学式，<br/>到底存不存在？</h1>
-    <p class="lede">输入任意化学式即刻判定——命中知识库即返，未收录的交由云端 AI 深度判定。还能给方程式配平、算摩尔质量与化学计量。比如氢氧化银，只在特定条件下存在，空气中很快脱水成氧化银。</p>
+    <p class="eyebrow" data-i18n="eyebrow">存在性判定 · 方程式配平 · 化学计量</p>
+    <h1 data-i18n="title">这个化学式，<br/>到底存不存在？</h1>
+    <p class="lede" data-i18n="lede">输入任意化学式即刻判定——命中知识库即返，未收录的交由云端 AI 深度判定。还能给方程式配平、算摩尔质量与化学计量。比如氢氧化银，只在特定条件下存在，空气中很快脱水成氧化银。</p>
   </section>
 
   <div class="modes" role="tablist">
-    <button class="mode active" data-mode="check" role="tab">物质判定</button>
-    <button class="mode" data-mode="eq" role="tab">配平 · 计算</button>
+    <button class="mode active" data-mode="check" role="tab" data-i18n="mode_check">物质判定</button>
+    <button class="mode" data-mode="eq" role="tab" data-i18n="mode_eq">配平 · 计算</button>
   </div>
 
   <!-- ── 判定模式 ── -->
   <section id="panel-check" class="panel">
-    <label class="field-label" for="formula">化学式</label>
+    <label class="field-label" for="formula" data-i18n="label_formula">化学式</label>
     <div class="field-row">
       <input id="formula" type="text" autocomplete="off" spellcheck="false"
              placeholder="AgOH · H2O2 · Ca(OH)2 · CuSO4·5H2O · [Cu(NH3)4]SO4" />
-      <button id="check" class="btn">判定</button>
+      <button id="check" class="btn" data-i18n="btn_check">判定</button>
     </div>
     <div class="preview" id="preview" aria-live="polite"></div>
 
     <div class="templates" id="templates"></div>
 
     <div class="examples">
-      <span class="ex-label">试试</span>
+      <span class="ex-label" data-i18n="try">试试</span>
       <button class="chip" data-f="AgOH">AgOH</button>
       <button class="chip" data-f="AuOH">AuOH</button>
       <button class="chip" data-f="Fe(OH)2">Fe(OH)₂</button>
@@ -65,34 +73,35 @@
 
   <!-- ── 配平·计算模式 ── -->
   <section id="panel-eq" class="panel hidden">
-    <label class="field-label" for="eqinput">反应物或完整方程式</label>
+    <label class="field-label" for="eqinput" data-i18n="label_eq">反应物或完整方程式</label>
     <div class="field-row">
       <input id="eqinput" type="text" autocomplete="off" spellcheck="false"
              placeholder="HCl+NaOH   或   KMnO4+HCl=KCl+MnCl2+H2O+Cl2" />
-      <button id="eqgo" class="btn">配平</button>
+      <button id="eqgo" class="btn" data-i18n="btn_eq">配平</button>
     </div>
-    <label class="field-label cond-label" for="cond">反应条件（可留空，默认 Null）</label>
+    <label class="field-label cond-label" for="cond" data-i18n="label_cond">反应条件（可留空，默认 Null）</label>
     <input id="cond" class="cond" type="text" autocomplete="off" spellcheck="false" placeholder="如 加热 / 点燃 / 催化剂 / 浓硫酸" />
 
     <div class="examples eq-examples">
-      <span class="ex-label">试试</span>
+      <span class="ex-label" data-i18n="try">试试</span>
       <button class="chip eq" data-e="HCl+NaOH">HCl+NaOH</button>
       <button class="chip eq" data-e="Fe+H2SO4">Fe+H₂SO₄</button>
       <button class="chip eq" data-e="CaCO3+HCl">CaCO₃+HCl</button>
       <button class="chip eq" data-e="H2+O2=H2O">H₂+O₂=H₂O</button>
       <button class="chip eq" data-e="KMnO4+HCl=KCl+MnCl2+H2O+Cl2">KMnO₄+HCl=…</button>
+      <button class="chip eq" data-e="AlCl3+Na2CO3">AlCl₃+Na₂CO₃ (双水解)</button>
     </div>
 
     <div id="eqresult"></div>
   </section>
 
   <section class="note">
-    <h3>关于“所有化学式”与云端 AI</h3>
-    <p>本地内置约 110 种常见与特殊物质（含注意事项），并用价键/氧化态规则即时推断其余。命中知识库毫秒即返；<strong>未收录的物质自动调用 Cloudflare Workers AI（Qwen3-30B）深度判定</strong>，给出名称、存在性与注意事项。方程式配平采用代数法（保证原子守恒），仅给反应物时先走本地规则、再由 AI 补全产物。规则与 AI 均为辅助判断，权威结论以实验与文献为准。</p>
+    <h3 data-i18n="note_title">关于"所有化学式"与云端 AI</h3>
+    <p data-i18n="note_body">本地内置约 110 种常见与特殊物质（含注意事项），并用价键/氧化态规则即时推断其余。命中知识库毫秒即返；<strong>未收录的物质自动调用 Cloudflare Workers AI（Qwen3-30B）深度判定</strong>，给出名称、存在性与注意事项。方程式配平采用代数法（保证原子守恒），仅给反应物时先走本地规则、再由 AI 补全产物。规则与 AI 均为辅助判断，权威结论以实验与文献为准。</p>
   </section>
 
   <footer class="foot">
-    <span>本地即时判定 · Workers AI 深度判定 · 代数配平与计量 · 教育用途，危险物质操作请遵循实验室规范</span>
+    <span data-i18n="footer">本地即时判定 · Workers AI 深度判定 · 代数配平与计量 · 教育用途，危险物质操作请遵循实验室规范</span>
   </footer>
 </main>
 

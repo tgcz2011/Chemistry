@@ -7,7 +7,12 @@
 3. **反应补全 + 化学计量**：仅给反应物（如 `HCl+NaOH`，条件可留空）→ 本地规则或 **Workers AI** 补全产物并配平，返回完整方程式与各物质摩尔质量，并可“给某物质的量 → 算其余”。
 4. **状态符号与可逆**：产物自动标注沉淀 `↓`、气体 `↑`；可逆反应（如 `N₂+3H₂⇌2NH₃`、`CO₂+H₂O⇌H₂CO₃`）用 `⇌` 表示。
 5. **剂量相关反应**：同一对反应物因少量/过量产物不同时，**列出全部方程式**（分步 + 总反应）。例如 CO₂ 通入澄清石灰水：少量生成 `CaCO₃↓`，过量溶解为 `Ca(HCO₃)₂`，并给出总反应。
-6. **物种存在性校验**：方程式各物质联动存在性判定，若某物质通常不存在会提示，避免“算了不存在的反应”。
+6. **双水解反应**：Al³⁺/Fe³⁺ 盐与 S²⁻/CO₃²⁻/HCO₃⁻/AlO₂⁻/SiO₃²⁻ 盐相遇时自动识别双水解，生成氢氧化物沉淀 + 气体/硅酸 + 盐，并配平。如 `AlCl₃+Na₂CO₃ → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl`。
+7. **物种存在性校验**：方程式各物质联动存在性判定，若某物质通常不存在会提示，避免"算了不存在的反应"。
+8. **元素质量分数**：判定结果附带元素组成表（符号/名称/原子数/质量分数），带可视化进度条。
+9. **酸根结构识别**：自动检测并标注常见含氧酸根（硫酸根/亚硫酸根/硝酸根/磷酸根/高锰酸根等 16 种）。
+10. **待核实状态**：未收录化学式在联网深度判定期间显示"待核实（WAITING）"章戳，联网完成后自动更新。
+11. **深色/浅色主题 + 中英双语**：一键切换明暗主题与中英文，偏好记忆到 localStorage。
 
 - 判定采用**多级 fallback 链**（本地 → 缓存 → 联网权威源 → AI）：
 
@@ -161,6 +166,13 @@ curl "https://chem-check.zztool.dpdns.org/api/equation?input=Fe%2BH2SO4"
 # → { "equation":"Fe + H₂SO₄ → FeSO₄ + H₂", "mode":"completion", "type":"置换", "ai":true }
 ```
 
+- 双水解反应（本地规则自动识别）：
+
+```bash
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
+# → { "equation":"2AlCl₃ + 3Na₂CO₃ + 3H₂O → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl", "type":"双水解" }
+```
+
 返回中 `species` 含每种物质的 `coeff`（系数）与 `molarMass`（摩尔质量），前端据此做化学计量计算。
 
 判定结果若来自联网，会附 `sources`（PubChem / 维基百科链接）、`source`（pubchem/workers-ai/knowledge-base/rule）、`fromCache` 等字段。
@@ -210,13 +222,13 @@ chem-check/
 │   ├── index.html        # 网页界面（检验报告单/SDS 风）
 │   ├── styles.css        # 样式
 │   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报）
-│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎（浏览器/Worker 共用）
-│   └── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量（含 118 元素原子量）
+│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 酸根检测（浏览器/Worker 共用）
+│   └── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
 ├── src/
 │   ├── worker.js         # Worker：路由 + fallback 链编排 + 上报限流 + AI 提示词
 │   ├── chem-sources.js   # PubChem / Wikipedia 数据源客户端
 │   ├── chem-cache.js     # D1 缓存（stale-while-revalidate）+ 上报限流
-│   └── chem-reactions.js # 本地无机反应补全引擎（中和/复分解/置换等）
+│   └── chem-reactions.js # 本地无机反应补全引擎（中和/复分解/置换/双水解/剂量变体）
 ├── migrations/
 │   └── 0001_init.sql     # D1 schema（缓存 + 限流）
 ├── wrangler.toml         # 部署配置（Worker + 静态资源 + AI + D1 + 自定义域名）

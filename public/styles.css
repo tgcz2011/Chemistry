@@ -22,11 +22,34 @@
   --conditional:#A27718;
   --unstable:#C05A1D;
   --no:#AE3320;
+  --waiting:#5B6B8C;
   --radius:4px;          /* 低圆角，偏文档感 */
   --serif:"Fraunces","Songti SC",Georgia,serif;
   --sans:"IBM Plex Sans","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
   --maxw:820px;
+  --grain-blend:multiply;
+}
+
+/* —— 深色主题 —— */
+[data-theme="dark"]{
+  --paper:#14110d;
+  --paper-2:#1d1813;
+  --paper-inset:#251f18;
+  --ink:#f0e8d6;
+  --ink-2:#b8ab92;
+  --ink-3:#8a7e68;
+  --line:#3a3128;
+  --line-strong:#4d4234;
+  --accent:#e07454;
+  --accent-deep:#c0543a;
+  --indigo:#7a9cd4;
+  --yes:#6fbf8a;
+  --conditional:#d4a93e;
+  --unstable:#e8954a;
+  --no:#e07474;
+  --waiting:#8a9ec0;
+  --grain-blend:screen;
 }
 *{box-sizing:border-box;}
 html{-webkit-text-size-adjust:100%;}
@@ -40,7 +63,7 @@ body{
 .grain{
   position:fixed; inset:0; z-index:60; pointer-events:none; opacity:.05;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode:multiply;
+  mix-blend-mode:var(--grain-blend);
 }
 /* —— 顶部发丝线 —— */
 .toprule{ position:fixed; top:0; left:0; right:0; height:4px; z-index:50;
@@ -59,6 +82,18 @@ body{
 .mast-link{ font-family:var(--mono); font-size:12px; color:var(--indigo); text-decoration:none;
   border-bottom:1px solid var(--indigo); padding-bottom:1px; }
 .mast-link:hover{ color:var(--accent); border-color:var(--accent); }
+
+/* —— 顶栏右侧控件 —— */
+.mast-right{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.toggle-btn{
+  appearance:none; background:transparent; border:1px solid var(--line-strong);
+  border-radius:var(--radius); padding:5px 8px; cursor:pointer; transition:.15s;
+  font-family:var(--mono); font-size:12px; color:var(--ink-2); line-height:1;
+}
+.toggle-btn:hover{ border-color:var(--ink); color:var(--ink); }
+.toggle-btn .seg{ display:inline-flex; gap:2px; }
+.toggle-btn .seg span{ padding:2px 6px; opacity:.35; font-weight:600; transition:.15s; }
+.toggle-btn .seg span.on{ opacity:1; background:var(--ink); color:var(--paper); border-radius:2px; }
 .rule{ border:none; border-top:1px solid var(--line-strong); margin:16px 0 0; }
 .rule{ box-shadow:0 1px 0 var(--paper-2); }
 
@@ -291,3 +326,40 @@ td.f .cdot{ margin-left:8px; }
   *{ animation:none !important; transition:none !important; }
 }
 :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+/* ============================================================
+   待核实章戳（联网查询中）
+   ============================================================ */
+.stamp-waiting{
+  color:var(--waiting); border-style:dashed; animation:wait-pulse 1.6s ease-in-out infinite;
+}
+@keyframes wait-pulse{ 0%,100%{ opacity:1;} 50%{ opacity:.55;} }
+
+/* ============================================================
+   酸根结构标签
+   ============================================================ */
+.radical-tag{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--mono); font-size:12px; font-weight:500;
+  padding:4px 10px; border:1px solid var(--indigo); border-left-width:4px;
+  border-radius:2px; background:color-mix(in srgb, var(--indigo) 6%, var(--paper));
+  color:var(--indigo);
+}
+.radical-tag::before{ content:"⬡"; font-size:14px; }
+
+/* ============================================================
+   元素质量分数组成表
+   ============================================================ */
+.comp-table{ width:100%; border-collapse:collapse; font-size:13px; }
+.comp-table th{
+  text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:1.5px;
+  color:var(--ink-3); text-transform:uppercase; padding:6px 8px;
+  border-bottom:1px solid var(--line-strong);
+}
+.comp-table td{ padding:7px 8px; border-bottom:1px solid var(--line); }
+.comp-table td.sym{ font-family:var(--mono); font-weight:600; font-size:14px; color:var(--indigo); }
+.comp-table td.bar-cell{ width:40%; }
+.comp-bar-track{ height:7px; background:var(--paper-inset); border-radius:2px; overflow:hidden; }
+.comp-bar-fill{ height:100%; background:var(--accent); transition:width .4s ease; }
+.comp-table td.masspct{ font-family:var(--mono); font-weight:600; }
+.comp-table td.elname{ color:var(--ink-2); font-size:12px; }

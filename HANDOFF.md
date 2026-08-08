@@ -49,6 +49,11 @@
 | 10 | 深度判定（AI） | 未收录物质调 Workers AI，返回名称/存在性/颜色/注意事项 | `&deep=1` |
 | 11 | 上报刷新 | 用户标记有误结果，限流后强制联网重查并更新缓存 | `GET /api/report?formula=X` |
 | 12 | D1 缓存 | 联网结果缓存 14 天，过期先返回旧值+后台刷新 | 自动 |
+| 13 | 双水解反应 | Al³⁺/Fe³⁺ 盐遇 S²⁻/CO₃²⁻/HCO₃⁻/AlO₂⁻/SiO₃²⁻ 自动识别双水解，生成氢氧化物沉淀+气体/硅酸+盐 | 方程式结果 `type:"双水解"` |
+| 14 | 元素质量分数 | 判定结果附元素组成表（符号/名称/原子数/质量分数），前端带进度条 | `composition` 字段 |
+| 15 | 酸根结构识别 | 自动检测 16 种常见含氧酸根（硫酸根/硝酸根/磷酸根/高锰酸根等） | `radical` 字段 |
+| 16 | 待核实状态 | 未收录式联网判定期间显示"WAITING"虚线章戳+脉冲动画 | 前端 `opts.waiting` |
+| 17 | 深色主题+双语 | 一键切换明暗主题与中英文，偏好记忆 localStorage | `data-theme` / `data-lang` |
 
 ---
 
@@ -73,13 +78,13 @@ chem-check/
 │   ├── index.html               # 页面结构（检验报告单/SDS 风）
 │   ├── styles.css               # 样式（暖纸色+发丝线+颗粒噪点+章戳）
 │   ├── app.js                   # 前端逻辑：判定+配平计算+变体渲染+上报 (291 行)
-│   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎 (814 行, 浏览器/Worker 共用)
-│   └── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量 (204 行, 含118元素原子量)
+│   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎+酸根检测 (831 行, 浏览器/Worker 共用)
+│   └── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量+元素质量分数 (204 行, 含118元素原子量)
 ├── src/                         # Worker 端
 │   ├── worker.js                # 路由 + fallback 链编排 + AI 提示词 + 上报 (462 行)
 │   ├── chem-sources.js          # PubChem / Wikipedia 客户端 (145 行)
 │   ├── chem-cache.js            # D1 缓存(stale-while-revalidate) + 限流 (101 行)
-│   └── chem-reactions.js        # 本地无机反应补全 + 状态符号 + 可逆 + 剂量变体 (188 行)
+│   └── chem-reactions.js        # 本地无机反应补全 + 状态符号 + 可逆 + 剂量变体 + 双水解 (257 行)
 ├── migrations/
 │   └── 0001_init.sql            # D1 schema：formula_cache + report_usage 两表
 ├── wrangler.toml                # 部署配置（Worker+静态资源+AI+D1+自定义域名）
@@ -175,7 +180,7 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 
 ---
 
-## 八、当前进度（截至 2026-08-07）
+## 八、当前进度（截至 2026-08-08）
 
 **已完成并生产验证通过**：
 - ✅ 去 AI 味的 SDS/检验报告单 UI（暖纸色+章戳+噪点，已上线）
@@ -184,12 +189,18 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 - ✅ 状态符号 ↓/↑、可逆 ⇌、剂量变体（14 组，含分步+总反应）
 - ✅ 物质颜色/形态（约 40 种 + AI 补充）、物种存在性校验
 - ✅ D1 缓存 + 上报限流、GitHub 开源（GPLv3）
-- ✅ 生产实测：`AgOH`(知识库)、`CaCl2`(PubChem)、`K2FeO4`(PubChem+AI/高铁酸钾)、`Na2FeO4`(纯AI/高铁酸钠)、`CaCO3+H2SO4`(复分解+CO2↑)、`N2+H2⇌NH3`(可逆)、限流第4次被拦截，全部正确。
+- ✅ **双水解反应**（Al³⁺/Fe³⁺ 配 S²⁻/CO₃²⁻/HCO₃⁻/AlO₂⁻/SiO₃²⁻，Fe³⁺+S²⁻ 排除走氧化还原）
+- ✅ **元素质量分数表**（compositionMassPct，含进度条可视化）
+- ✅ **酸根结构识别**（detectRadical，16 种含氧酸根，借鉴 Formula.zip analyzer 设计）
+- ✅ **待核实（WAITING）状态**（未收录式联网判定期间虚线章戳+脉冲动画）
+- ✅ **深色/浅色主题 + 中英双语切换**（data-theme/data-lang，localStorage 持久化）
+- ✅ 生产实测：`AgOH`(知识库)、`CaCl2`(PubChem)、`K2FeO4`(PubChem+AI/高铁酸钾)、`Na2FeO4`(纯AI/高铁酸钠)、`CaCO3+H2SO4`(复分解+CO2↑)、`N2+H2⇌NH3`(可逆)、`AlCl3+Na2CO3`(双水解→2Al(OH)₃↓+3CO₂↑+6NaCl)、限流第4次被拦截，全部正确。
 
 **已知的待改进/小瑕疵**：
 - ⚠️ AI 对个别物质会"过度保守"判 uncertain（如 `XeF2`，模型能力所限，可接受）。
 - ⚠️ 前端 Google Fonts 国内加载慢，未做镜像/自托管。
 - ⚠️ 本地 `wrangler dev` 因 remote AI 起不来（见坑 #9），暂靠 Node 直测 + 线上验证。
+- ⚠️ 语言切换后方程式结果区不自动重渲染（仅判定结果会重渲染），需重新点配平按钮。
 
 ---
 

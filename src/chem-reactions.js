@@ -14,6 +14,17 @@ const METAL_OXIDE = { "Na2O":["Na",1],"K2O":["K",1],"CaO":["Ca",2],"MgO":["Mg",2
 const ACTIVE_METAL = { "Na":1,"K":1,"Li":1,"Ca":2,"Ba":2,"Mg":2,"Al":3,"Zn":2,"Fe":2,"Sn":2,"Pb":2 };
 const NONMETAL_OXIDE = { "CO2":["CO3",2],"SO2":["SO3",2],"SO3":["SO4",2],"N2O5":["NO3",1],"P2O5":["PO4",3] };
 
+// ===== 双水解相关盐表：值 = [对位离子符号, 对位离子电荷] =====
+// 铝/铁(III) 盐：阳离子 Al/Fe 电荷 3，值 = [酸根, 酸根电荷]
+const AL_SALT  = { "AlCl3":["Cl",1], "Al2(SO4)3":["SO4",2], "Al(NO3)3":["NO3",1] };
+const FE3_SALT = { "FeCl3":["Cl",1], "Fe2(SO4)3":["SO4",2], "Fe(NO3)3":["NO3",1] };
+// 碱性水解阴离子盐：值 = [阳离子, 阳离子电荷]；阴离子根由表名固定
+const SULFIDE    = { "Na2S":["Na",1], "K2S":["K",1], "(NH4)2S":["NH4",1] };          // S²⁻
+const CARBONATE2 = { "Na2CO3":["Na",1], "K2CO3":["K",1], "(NH4)2CO3":["NH4",1] };    // CO₃²⁻
+const BICARB2    = { "NaHCO3":["Na",1], "KHCO3":["K",1], "NH4HCO3":["NH4",1] };      // HCO₃⁻
+const ALUMINATE  = { "NaAlO2":["Na",1], "KAlO2":["K",1] };                           // AlO₂⁻
+const SILICATE   = { "Na2SiO3":["Na",1], "K2SiO3":["K",1] };                         // SiO₃²⁻
+
 // ===== 气体（在溶液/固相反应中逸出标 ↑）=====
 const GASES = new Set(["CO2","H2","O2","NH3","H2S","SO2","NO","NO2","CO","Cl2","CH4","C2H2","C2H4","N2O","O3","F2"]);
 
@@ -144,9 +155,67 @@ export function makeSalt(cation, cq, anion, aq) {
 }
 function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a || 1; }
 
+// ===== 双水解（mutual hydrolysis）检测 =====
+// Al³⁺/Fe³⁺ 盐（酸性水解）与 S²⁻/CO₃²⁻/HCO₃⁻/AlO₂⁻/SiO₃²⁻ 盐（碱性水解）相遇，
+// 互相促进水解完全，产物为氢氧化物沉淀 + 气体（或硅酸）+ 盐。
+function tryDoubleHydrolysis(reactants) {
+  let ms = null, bs = null; // ms = 铝/铁盐, bs = 碱性水解阴离子盐
+  for (const f of reactants) {
+    if (!ms) {
+      if (AL_SALT[f])       ms = { f, M: "Al", An: AL_SALT[f][0],  aq: AL_SALT[f][1] };
+      else if (FE3_SALT[f]) ms = { f, M: "Fe", An: FE3_SALT[f][0], aq: FE3_SALT[f][1] };
+    }
+    if (!bs) {
+      if (SULFIDE[f])        bs = { f, B: SULFIDE[f][0],  bq: SULFIDE[f][1],  Rad: "S",    rq: 2 };
+      else if (CARBONATE2[f]) bs = { f, B: CARBONATE2[f][0], bq: CARBONATE2[f][1], Rad: "CO3",  rq: 2 };
+      else if (BICARB2[f])    bs = { f, B: BICARB2[f][0],    bq: BICARB2[f][1],    Rad: "HCO3", rq: 1 };
+      else if (ALUMINATE[f])  bs = { f, B: ALUMINATE[f][0],  bq: ALUMINATE[f][1],  Rad: "AlO2", rq: 1 };
+      else if (SILICATE[f])   bs = { f, B: SILICATE[f][0],   bq: SILICATE[f][1],   Rad: "SiO3", rq: 2 };
+    }
+  }
+  if (!ms || !bs) return null;
+  const { M, An, aq } = ms;
+  const { B, bq, Rad } = bs;
+  // Fe³⁺ 与 S²⁻ 实为氧化还原（Fe³⁺ 把 S²⁻ 氧化为 S），不属双水解
+  if (M === "Fe" && Rad === "S") return null;
+  // AlO₂⁻ 双水解仅 M=Al 有意义
+  if (Rad === "AlO2" && M !== "Al") return null;
+
+  const oh = M + "(OH)3";                       // Al(OH)3 / Fe(OH)3
+  const salt = makeSalt(B, bq, An, aq);         // spectator 盐
+  const left = reactants.slice();
+  const addWater = () => { if (!left.includes("H2O")) left.push("H2O"); };
+  let right;
+  switch (Rad) {
+    case "S":     addWater(); right = [oh, "H2S",    salt]; break;
+    case "CO3":   addWater(); right = [oh, "CO2",    salt]; break;
+    case "HCO3":             right = [oh, "CO2",    salt]; break; // 化学计量自洽，不加 H2O
+    case "AlO2":  addWater(); right = [oh,           salt]; break;
+    case "SiO3":  addWater(); right = [oh, "H2SiO3", salt]; break;
+    default: return null;
+  }
+  return { left, right, type: "双水解", note: dhNote(M, Rad), _ai: false };
+}
+
+function dhNote(M, Rad) {
+  const m = M === "Al" ? { salt: "铝盐",      ion: "Al³⁺",  oh: "氢氧化铝" }
+                       : { salt: "铁(III)盐", ion: "Fe³⁺",  oh: "氢氧化铁" };
+  const r = {
+    S:    { src: "硫化物",   ion: "S²⁻",   extra: "与硫化氢气体" },
+    CO3:  { src: "碳酸盐",   ion: "CO₃²⁻", extra: "与二氧化碳气体" },
+    HCO3: { src: "碳酸氢盐", ion: "HCO₃⁻", extra: "与二氧化碳气体" },
+    AlO2: { src: "偏铝酸盐", ion: "AlO₂⁻", extra: "" },
+    SiO3: { src: "硅酸盐",   ion: "SiO₃²⁻", extra: "与硅酸沉淀" },
+  }[Rad];
+  return `${m.salt}与${r.src}发生双水解：${m.ion} 与 ${r.ion} 互相促进水解，生成${m.oh}沉淀${r.extra}。`;
+}
+
 // ===== 本地反应补全 =====
 export function localCompleteReaction(reactants) {
   if (!Array.isArray(reactants) || reactants.length !== 2) return null;
+  // 双水解检测（优先于通用 pair 规则）
+  const dh = tryDoubleHydrolysis(reactants);
+  if (dh) return dh;
   const A = classify(reactants[0]);
   const B = classify(reactants[1]);
   if (!A || !B) return null;
@@ -185,4 +254,4 @@ export function isReversible(leftFormulas, rightFormulas){
 }
 
 // 暴露集合（测试用）
-export const _data = { GASES, INSOLUBLE, DOSAGE };
+export const _data = { GASES, INSOLUBLE, DOSAGE, AL_SALT, FE3_SALT, SULFIDE };
