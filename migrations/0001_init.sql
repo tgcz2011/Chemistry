@@ -1,6 +1,6 @@
 -- chem-check D1 缓存与上报限流
 -- 仅缓存「本地知识库未命中 → 联网(PubChem/Wiki/AI)」的判定结果；本地知识库命中的不缓存（瞬时返回）。
--- updated_at 超过 STALE 天数后视为过期，读出时先返回旧值、后台联网刷新（stale-while-revalidate）。
+-- 缓存永不过期（STALE_MS=Infinity），仅上报标记有误时强制重查覆盖。
 
 CREATE TABLE IF NOT EXISTS formula_cache (
   formula      TEXT PRIMARY KEY,   -- 规范化化学式（去状态/统一水合点，保留电荷 core|±n）

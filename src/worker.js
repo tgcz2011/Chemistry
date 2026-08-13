@@ -1,12 +1,15 @@
 // src/worker.js — Cloudflare Worker
 // 判定 fallback 链（借鉴 Formula 项目思想，独立实现）：
-//   本地知识库/规则 → D1 缓存(14天 stale-while-revalidate) → PubChem → Wikipedia → Workers AI → 回写 D1
+//   本地知识库/规则 → D1 缓存(永不过期，上报刷新时覆盖) → PubChem → Wikipedia → Workers AI → 回写 D1
 // 路由：
 //   GET /api/check?formula=X[&deep=1]   存在性判定（deep=1 触发联网兜底链）
 //   GET /api/report?formula=X[&did=Y]   用户上报信息有误 → 限流后强制联网重查并更新缓存
 //   GET /api/equation?input=..&condition=..  方程式配平/补全/计量
 //   GET /api/health                     健康检查
 //   其余                                静态站点（public/）
+//
+// 鉴权：全部 /api/* 需携带 API Key（Authorization: Bearer <key> 或 X-Api-Key 头，兼容 ?key= 查询串）。
+// 说明：化学式判定结果含"电极电势"栏目（含能斯特方程），由本地 ELECTRODE 表或 AI 深度判定提供。
 
 import { analyze, prettyFormula, detectRadical } from "../public/chem-engine.js";
 import { balanceEquation, parseEquation, molarMass, prettyEquation, compositionMassPct } from "../public/chem-calc.js";
@@ -22,32 +25,39 @@ export default {
     const path = url.pathname;
 
     try {
+      // CORS 预检：跨域 API 调用带 Authorization 头时浏览器会先发 OPTIONS 预检
+      if (request.method === "OPTIONS" && path.startsWith("/api/")) {
+        return handlePreflight(request);
+      }
       if (path === "/api/health") {
-        return json({ ok: true, service: "chem-check", ai: !!env.AI, db: !!env.DB, time: Date.now() });
+        // 健康检查属公开信息；跨域浏览器读取不开放，curl/监控可直接访问
+        return applyCors(json({ ok: true, service: "chem-check", ai: !!env.AI, db: !!env.DB, time: Date.now() }), request, url, false);
       }
       // 业务 API：网页同源查询免费无限；外部跨域调用需 API key 且按 IP 限 50/天
       const isApiPath = path.startsWith("/api/check") || path.startsWith("/api/report") || path.startsWith("/api/equation");
+      let authorized = false;
       if (isApiPath) {
         const gate = await apiGate(request, env, url);
         if (gate.denied) return gate.resp;
+        authorized = !!gate.authorized;
       }
+      let resp = null;
       if (path === "/api/check") {
         const formula = url.searchParams.get("formula") || "";
         const deep = url.searchParams.get("deep") === "1";
-        return await handleCheck(formula, deep, env, ctx);
-      }
-      if (path === "/api/report") {
+        resp = await handleCheck(formula, deep, env, ctx);
+      } else if (path === "/api/report") {
         const formula = url.searchParams.get("formula") || "";
         const did = (url.searchParams.get("did") || "").trim();
-        return await handleReport(formula, did, request, env, ctx);
-      }
-      if (path === "/api/equation") {
+        resp = await handleReport(formula, did, request, env, ctx);
+      } else if (path === "/api/equation") {
         const input = url.searchParams.get("input") || "";
         const condition = url.searchParams.get("condition") || "";
-        return await handleEquation(input, condition, env, ctx);
+        resp = await handleEquation(input, condition, env, ctx);
       }
+      if (resp) return applyCors(resp, request, url, authorized);
     } catch (e) {
-      return json({ ok: false, error: "服务器错误：" + (e && e.message ? e.message : String(e)) }, 500);
+      return applyCors(json({ ok: false, error: "服务器错误：" + (e && e.message ? e.message : String(e)) }, 500), request, url, false);
     }
 
     // 静态资源回退
@@ -162,6 +172,7 @@ async function enrichOnline(local, env) {
       notes, warnings: buildWarnings(ai?.tags || []), tags: ai?.tags || [], related: ai?.related || [],
       colors: (ai && ai.colors) || local.colors || null,
       redox: ai?.redox || null, solubility: ai?.solubility || null,
+      electrode: ai?.electrode || local.electrode || null,
       mass: top.molecularWeight || mass, ruleNote: local.ruleNote,
       radical: local.radical, composition: local.composition
     };
@@ -181,6 +192,7 @@ async function enrichOnline(local, env) {
       notes: ai.notes, warnings: buildWarnings(ai.tags), tags: ai.tags, related: ai.related,
       colors: ai.colors || local.colors || null,
       redox: ai.redox || null, solubility: ai.solubility || null,
+      electrode: ai.electrode || local.electrode || null,
       mass, ruleNote: local.ruleNote,
       radical: local.radical, composition: local.composition
     };
@@ -226,7 +238,8 @@ async function aiJudgeOnce(env, c) {
     '  "related": ["相关化学式"],\n' +
     '  "colors": [{"form":{"cn":"形态","en":"form"},"color":{"cn":"颜色","en":"color"},"hex":"#hex","ion":null}],\n' +
     '  "redox": [{"condition":{"cn":"条件","en":"condition"},"behavior":{"cn":"氧化性|还原性|歧化|既氧化又还原|无显著氧化还原性","en":"Oxidizing|Reducing|Disproportionation|Both|No significant redox activity"},"detail":{"cn":"描述","en":"description"}}],\n' +
-    '  "solubility": [{"solvent":{"cn":"溶剂","en":"solvent"},"value":{"cn":"易溶|可溶|微溶|难溶|不溶","en":"very soluble|soluble|slightly soluble|practically insoluble|insoluble"},"note":{"cn":"说明","en":"note"}}]\n' +
+    '  "solubility": [{"solvent":{"cn":"溶剂","en":"solvent"},"value":{"cn":"易溶|可溶|微溶|难溶|不溶","en":"very soluble|soluble|slightly soluble|practically insoluble|insoluble"},"note":{"cn":"说明","en":"note"}}],\n' +
+    '  "electrode": [{"condition":{"cn":"条件（如 酸性/碱性/固态）","en":"condition (acidic/alkaline/solid etc.)"},"reaction":{"cn":"半电池反应式","en":"half-cell reaction"},"e0":{"cn":"标准电极电势 E°（含单位）","en":"standard electrode potential E° (with unit)"},"nernst":{"cn":"能斯特方程 E=f(浓度/分压)","en":"Nernst equation E=f(concentration/partial pressure)"},"detail":{"cn":"说明","en":"note"}}]\n' +
     "}\n\n" +
     "【字段规则】\n" +
     "verdict：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。\n" +
@@ -237,7 +250,8 @@ async function aiJudgeOnce(env, c) {
     "colors：按形态分类（固体/晶体/水溶液/气体等）；无色写 color={cn:\"无色\",en:\"colorless\"}、hex=\"#f6f6f2\"；" +
     "ion 填导致该颜色的离子/物种（中英文），若颜色来自物质整体则填 null；无资料给空数组。\n" +
     "redox：按条件分类讨论；behavior 中英文枚举；detail 中英文描述；无资料给空数组。\n" +
-    "solubility：按溶剂分类；value 中英文枚举；note 中英文数值/说明；无资料给空数组。\n\n" +
+    "solubility：按溶剂分类；value 中英文枚举；note 中英文数值/说明；无资料给空数组。\n" +
+    "electrode：电极电势按条件/介质分类（酸性、碱性、中性、非水、固态等）；reaction 写半电池反应；e0 写标准电势（含 V）；nernst 写能斯特方程（E°+(0.0592/n)·lg... 形式，含浓度/分压项）；detail 说明（如电池应用）；该物质不构成电极体系或查无资料给空数组。\n\n" +
     "【重要原则】\n" +
     "1. PubChem 未收录 ≠ 不存在——许多无机盐、配合物、水合物、高价含氧酸盐在 PubChem 中可能搜不到但确实存在。\n" +
     "2. 基于事实下明确结论，不要堆砌可能/也许。\n" +
@@ -247,7 +261,7 @@ async function aiJudgeOnce(env, c) {
     "【正确示例 - CuSO4】\n" +
     '{"verdict":"yes","name":{"cn":"硫酸铜","en":"Copper sulfate"},"notes":[{"cn":"无水硫酸铜为白色粉末，吸水后变蓝，可作干燥剂。","en":"Anhydrous copper sulfate is a white powder that turns blue upon water absorption, usable as a desiccant."},{"cn":"五水合物 CuSO4·5H2O 俗称胆矾，蓝色晶体。","en":"The pentahydrate CuSO4·5H2O (blue vitriol) forms blue crystals."},{"cn":"重金属盐有毒，避免误食，废液按含铜废液处理。","en":"Heavy metal salt: toxic if ingested; treat waste as copper-containing."}],"tags":["toxic"],"related":["CuSO4·5H2O","Cu(OH)2","BaCl2"],"colors":[{"form":{"cn":"无水固体","en":"anhydrous solid"},"color":{"cn":"白色","en":"white"},"hex":"#f4f4f0","ion":null},{"form":{"cn":"水溶液","en":"aqueous solution"},"color":{"cn":"蓝色","en":"blue"},"hex":"#2e6fd6","ion":{"cn":"Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺","en":"Cu²⁺ hydrated as [Cu(H₂O)₄]²⁺"}}],"redox":[{"condition":{"cn":"在水中","en":"in water"},"behavior":{"cn":"无显著氧化还原性","en":"No significant redox activity"},"detail":{"cn":"Cu²⁺ 较稳定，不氧化水。","en":"Cu²⁺ is stable and does not oxidize water."}},{"condition":{"cn":"活泼金属置换","en":"displacement by active metals"},"behavior":{"cn":"氧化性","en":"Oxidizing"},"detail":{"cn":"Cu²⁺ 可被 Zn/Fe 置换为 Cu 单质。","en":"Cu²⁺ can be displaced by Zn/Fe to form Cu."}}],"solubility":[{"solvent":{"cn":"水","en":"water"},"value":{"cn":"易溶","en":"very soluble"},"note":{"cn":"20°C 约 23g/100mL","en":"~23g/100mL at 20°C"}},{"solvent":{"cn":"乙醇","en":"ethanol"},"value":{"cn":"微溶","en":"slightly soluble"},"note":{"cn":"难溶于无水乙醇","en":"poorly soluble in anhydrous ethanol"}}]}\n\n' +
     "【错误示例（禁止这样做）】\n" +
-    "× 省略 colors/redox/solubility 字段\n" +
+    "× 省略 colors/redox/solubility/electrode 字段\n" +
     "× 只给中文不给英文\n" +
     "× color 写蓝色但不给 ion 来源\n" +
     "× redox 只写一条不分条件\n" +
@@ -303,6 +317,20 @@ async function aiJudgeOnce(env, c) {
     })
     .filter(Boolean).slice(0, 6);
 
+  // electrode：双语 condition/reaction/e0/nernst/detail
+  const electrode = (Array.isArray(data.electrode) ? data.electrode : [])
+    .map(x => {
+      if (!x || typeof x !== "object") return null;
+      return {
+        condition: biStr(x.condition) || {cn:"未明确",en:"unspecified"},
+        reaction: biStr(x.reaction) || {cn:"",en:""},
+        e0: biStr(x.e0) || {cn:"",en:""},
+        nernst: biStr(x.nernst) || {cn:"",en:""},
+        detail: biStr(x.detail) || {cn:"",en:""}
+      };
+    })
+    .filter(Boolean).slice(0, 8);
+
   return {
     ok: true,
     verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict) ? data.verdict : "conditional",
@@ -315,7 +343,8 @@ async function aiJudgeOnce(env, c) {
     related: Array.isArray(data.related) ? data.related.map(String).slice(0, 5) : [],
     colors: colors.length ? colors : undefined,
     redox: redox.length ? redox : undefined,
-    solubility: solubility.length ? solubility : undefined
+    solubility: solubility.length ? solubility : undefined,
+    electrode: electrode.length ? electrode : undefined
   };
 }
 
@@ -552,12 +581,48 @@ function buildWarnings(tags) {
 function json(data, status, headers) {
   return new Response(JSON.stringify(data), {
     status: status || 200,
-    headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*", ...(headers || {}) }
+    headers: { "content-type": "application/json; charset=utf-8", ...(headers || {}) }
   });
 }
 
 // ---------------------------------------------------------------------------
-// API 网关：同源网页查询免费无限；外部跨域调用需 ?key= 且按 IP 限 50/天
+// CORS 收敛：不再对全部响应返回 access-control-allow-origin: *。
+//   - 同源请求（网页查询）：不需要 CORS 头，直接返回
+//   - 跨域 + 已授权（携带有效 API key）：回显请求来源，供浏览器读取
+//   - 跨域 + 未授权：不设 CORS 头，浏览器将阻止读取响应
+// ---------------------------------------------------------------------------
+function applyCors(resp, request, url, authorized) {
+  const origin = request.headers.get("Origin") || "";
+  if (!origin) return resp;
+  let same = false;
+  try { same = new URL(origin).host === url.host; } catch { /* fallthrough */ }
+  if (same) return resp;
+  if (!authorized) return resp;
+  const headers = new Headers(resp.headers);
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Vary", "Origin");
+  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+}
+
+// CORS 预检：跨域请求携带 Authorization 头时浏览器先发 OPTIONS；
+// 预检本身不携带凭据，仅声明允许的方法与请求头，真实响应仍受 apiGate 校验
+function handlePreflight(request) {
+  const origin = request.headers.get("Origin") || "";
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": origin || "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Authorization, X-Api-Key, Content-Type",
+      "access-control-max-age": "86400",
+      "vary": "Origin, Access-Control-Request-Headers"
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// API 网关：同源网页查询免费无限；外部跨域调用需 API key 且按 IP 限 50/天
+// key 从 Authorization: Bearer <key> 或 X-Api-Key 头读取（不再建议放 URL 查询串）
 // ---------------------------------------------------------------------------
 function sameOrigin(request, url) {
   const origin = request.headers.get("Origin") || "";
@@ -572,20 +637,29 @@ function sameOrigin(request, url) {
   return false;
 }
 
+function extractApiKey(request, url) {
+  const auth = request.headers.get("Authorization") || "";
+  const m = auth.match(/^\s*Bearer\s+(.+)$/i);
+  if (m) return m[1].trim();
+  const xk = request.headers.get("X-Api-Key") || "";
+  if (xk.trim()) return xk.trim();
+  return (url.searchParams.get("key") || "").trim();
+}
+
 async function apiGate(request, env, url) {
   // 1) 同源（网页查询）→ 放行，不计限流
   if (sameOrigin(request, url)) return { denied: false };
   // 2) 外部跨域调用 → 必须带有效 API key
-  const key = (url.searchParams.get("key") || "").trim();
+  const key = extractApiKey(request, url);
   if (!key) {
     return {
       denied: true,
-      resp: json({ ok: false, error: "外部 API 调用需要 API key。请在 URL 加 ?key=<你的key>。生成方式见 README「API 调用教程」。" }, 401)
+      resp: applyCors(json({ ok: false, error: "外部 API 调用需要 API key。请在请求头 Authorization: Bearer <你的key> 中携带（或 X-Api-Key 头）。生成方式见 README「API 调用教程」。" }, 401), request, url, false)
     };
   }
   const validKeys = (env.API_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
   if (!validKeys.length || !validKeys.includes(key)) {
-    return { denied: true, resp: json({ ok: false, error: "API key 无效。" }, 403) };
+    return { denied: true, resp: applyCors(json({ ok: false, error: "API key 无效。" }, 403), request, url, true) };
   }
   // 3) 按 IP 限流 50/天
   const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
@@ -593,15 +667,15 @@ async function apiGate(request, env, url) {
   if (!limit.allowed) {
     return {
       denied: true,
-      resp: json({ ok: false, error: `今日 API 调用已达上限（${limit.limit} 次/IP/天），请明日再试。`, limit }, 429, {
+      resp: applyCors(json({ ok: false, error: `今日 API 调用已达上限（${limit.limit} 次/IP/天），请明日再试。`, limit }, 429, {
         "X-RateLimit-Limit": String(limit.limit),
         "X-RateLimit-Remaining": "0",
         "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 86400),
         "Retry-After": "86400"
-      })
+      }), request, url, true)
     };
   }
-  return { denied: false, limit };
+  return { denied: false, authorized: true, limit };
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +701,7 @@ function normalizeResult(res) {
     redox: none(res.redox),                       // 氧化/还原性（分类讨论）
     colors: none(res.colors),                     // 颜色（每项含 ion 显色来源）
     solubility: none(res.solubility),             // 溶解度（分类）
+    electrode: (Array.isArray(res.electrode) && res.electrode.length) ? res.electrode : null, // 电极电势（分类；无则 null）
     warnings: none(res.warnings),
     notes: none(res.notes),
     sources: none(res.sources),

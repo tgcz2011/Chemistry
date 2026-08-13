@@ -2525,6 +2525,9 @@ function ruleCheck(parsed){
   if(parsed.charge!==0){
     return {balanced:true, charged:true, note:`该式表示一个带电离子（总电荷 ${parsed.charge>0?"+":""}${parsed.charge}），本身不是中性物质，需与带相反电荷的离子结合成盐/配合物。`};
   }
+  // 判断是否为氢负离子化合物（H 与电负性低于 H 的元素结合时取 -1）
+  // 例如金属氢化物（CaH2、LiH、NaH、AlH3）、硼烷/硅烷（B2H6、SiH4、NaBH4）
+  const hydrideH = isHydrideH(els);
   // 计算"固定氧化态"元素贡献的净电荷
   let fixedSum=0;
   const variable=[]; // 可能变价的元素及其原子数
@@ -2532,7 +2535,8 @@ function ruleCheck(parsed){
     const e=ELEMENTS[sym];
     const n=els[sym];
     if(e.fixedOS!==null && e.fixedOS!==undefined){
-      fixedSum += e.fixedOS*n;
+      const os = (sym==="H" && hydrideH) ? -1 : e.fixedOS;
+      fixedSum += os*n;
     } else {
       variable.push({sym,n,os:e.commonOS});
     }
@@ -2549,6 +2553,11 @@ function ruleCheck(parsed){
     if(!Number.isInteger(need)) {
       // 试试过氧化物解释：若只剩 O 且 need 为 -1（即 O 取 -1）
       if(v.sym==="O" && need===-1) return {balanced:true,charged:false,note:"按过氧化物（O 取 -1）解释可满足电中性，可能为过氧化物/超氧化物。"};
+      // 试试混合价解释：两种常见氧化态按整数原子数组合（如 Fe3O4=FeO·Fe2O3、Mn3O4=MnO·Mn2O3、Pb3O4=PbO·PbO2）
+      const mv = mixedValenceCheck(v, -fixedSum);
+      if(mv){
+        return {balanced:true,charged:false,note:`按电中性推算 ${v.sym} 平均氧化态为 ${fmtOS(need)}，可解释为混合价：${mv.ha} 个 ${v.sym} 取 ${fmtOS(mv.a)}、${mv.hb} 个取 ${fmtOS(mv.b)}（平均 ${fmtOS(need)}），存在混合价化合物，可能存在。`};
+      }
       return {balanced:false,charged:false,note:`按电中性推算 ${v.sym} 所需氧化态为 ${fmtOS(need)}（非整数），不符合常规氧化态，通常不存在。`};
     }
     if(v.os.includes(need)){
@@ -2564,10 +2573,718 @@ function ruleCheck(parsed){
 
 function fmtOS(x){ return x>0?("+"+x):(""+x); }
 
+// 判断是否为氢负离子化合物：H 与电负性低于 H 的元素（金属、B、Si、Ge、Al）结合时取 -1
+function isHydrideH(els){
+  const hasH = Object.prototype.hasOwnProperty.call(els,"H");
+  if(!hasH) return false;
+  const others = Object.keys(els).filter(s=>s!=="H");
+  if(others.length===0) return false;
+  return others.every(s=>{
+    const e=ELEMENTS[s];
+    return e && (e.metal || s==="B" || s==="Si" || s==="Ge" || s==="Al");
+  });
+}
+
+// 混合价检测：totalOx 为需要由 n 个变价元素原子分摊的总氧化值，
+// 尝试用两种常见氧化态 a/b 按整数原子数 ha/hb 组合（ha+hb=n）。
+// 例：Fe3O4（Fe 平均 +8/3 → 1×+2 + 2×+3）、Mn3O4、Co3O4、Pb3O4
+function mixedValenceCheck(v, totalOx){
+  const n=v.n;
+  if(n<2) return null;
+  const os=v.os.filter(x=>Number.isInteger(x));
+  for(const a of os){
+    for(const b of os){
+      if(a===b) continue;
+      // ha*a + hb*b = totalOx, ha+hb=n  =>  ha = (totalOx - b*n)/(a-b)
+      const denom = a-b;
+      if(denom===0) continue;
+      const ha = (totalOx - b*n)/denom;
+      if(Number.isInteger(ha) && ha>0 && ha<n){
+        return {a, b, ha, hb:n-ha};
+      }
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
-// 常见物质的颜色（按形态分类：固体/晶体/水溶液/气体等）
-// form: 形态；color: 颜色；hex: 代表色值（用于前端色块）
+// 常见物质的电极电势（标准还原电势 E°，25°C，vs SHE）
+// 分多种情形讨论：酸性/碱性/中性溶液、标准态、非水/熔融等；
+// 溶液中给出随常见离子浓度（如 [H⁺]、[Mⁿ⁺]）变化的能斯特方程。
+// 无电极数据的物质（惰性盐、有机物、非氧化还原体系）不收录 → 前端显示"无"。
+// 条目结构：{condition:{cn,en}, reaction:{cn,en}, e0:{cn,en}, nernst:{cn,en}, detail:{cn,en}}
 // ---------------------------------------------------------------------------
+function ep(cn,en,rcn,ren,e0cn,e0en,ncn,nen,dcn,den){
+  return {
+    condition:{cn:cn,en:en},
+    reaction:{cn:rcn,en:ren},
+    e0:{cn:e0cn,en:e0en},
+    nernst:{cn:ncn,en:nen},
+    detail:{cn:dcn,en:den}
+  };
+}
+export const ELECTRODE = {
+  "H2O2":[
+    ep("酸性溶液","acidic solution","H₂O₂ + 2H⁺ + 2e⁻ ⇌ 2H₂O","H₂O₂ + 2H⁺ + 2e⁻ ⇌ 2H₂O","E° = +1.78 V","E° = +1.78 V","E = 1.78 + (0.0592/2)·lg([H₂O₂][H⁺]²)","E = 1.78 + (0.0592/2)·log([H₂O₂][H⁺]²)","H₂O₂ 是强氧化剂；氧化性随 [H⁺] 增大而增强","H₂O₂ is a strong oxidant; oxidizing power increases with [H⁺]"),
+    ep("碱性溶液","alkaline solution","H₂O₂ + 2e⁻ ⇌ 2OH⁻","H₂O₂ + 2e⁻ ⇌ 2OH⁻","E° = +0.88 V","E° = +0.88 V","E = 0.88 + (0.0592/2)·lg[H₂O₂]","E = 0.88 + (0.0592/2)·log[H₂O₂]","碱性中仍为氧化剂，但氧化性弱于酸性","Still an oxidant in base, but weaker than in acid"),
+    ep("作还原剂（遇强氧化剂）","as a reducing agent (with strong oxidants)","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂","E° = +0.68 V","E° = +0.68 V","E = 0.68 + (0.0592/2)·lg(p(O₂)[H⁺]²/[H₂O₂])","E = 0.68 + (0.0592/2)·log(p(O₂)[H⁺]²/[H₂O₂])","遇 KMnO₄、Cl₂ 等强氧化剂时 H₂O₂ 被氧化放出 O₂","H₂O₂ is oxidized to O₂ by strong oxidants such as KMnO₄ and Cl₂")
+  ],
+  "O2":[
+    ep("酸性溶液","acidic solution","O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O","O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O","E° = +1.23 V","E° = +1.23 V","E = 1.23 + (0.0592/4)·lg(p(O₂)[H⁺]⁴)","E = 1.23 + (0.0592/4)·log(p(O₂)[H⁺]⁴)","氧化性随 [H⁺] 增大（pH 下降）而增强","Oxidizing power rises with [H⁺] (lower pH)"),
+    ep("中性/碱性溶液","neutral/alkaline solution","O₂ + 2H₂O + 4e⁻ ⇌ 4OH⁻","O₂ + 2H₂O + 4e⁻ ⇌ 4OH⁻","E° = +0.40 V","E° = +0.40 V","E = 0.40 + (0.0592/4)·lg(p(O₂)/[OH⁻]⁴)","E = 0.40 + (0.0592/4)·log(p(O₂)/[OH⁻]⁴)","碱性介质中氧化性明显减弱","Oxidizing power decreases markedly in alkaline media"),
+    ep("气体标准态","standard state (gas)","O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O","O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O","E° = +1.23 V","E° = +1.23 V","E 随 p(O₂) 变化：每增大 10 倍 O₂ 分压，E 升高约 14.8 mV","E depends on p(O₂): every 10× rise in p(O₂) raises E by ~14.8 mV","标准氢电极参考：E°(O₂/H₂O)=1.229 V","SHE reference: E°(O₂/H₂O)=1.229 V")
+  ],
+  "H2":[
+    ep("酸性溶液","acidic solution","2H⁺ + 2e⁻ ⇌ H₂","2H⁺ + 2e⁻ ⇌ H₂","E° = 0.00 V","E° = 0.00 V","E = (0.0592/2)·lg([H⁺]²/p(H₂)) = −0.0592·pH","E = (0.0592/2)·log([H⁺]²/p(H₂)) = −0.0592·pH","氢电极电势随 pH 线性变化，pH 每升 1，E 降约 59.2 mV","The H₂/H⁺ potential changes linearly with pH: −59.2 mV per pH unit"),
+    ep("中性/碱性溶液","neutral/alkaline solution","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","E° = −0.83 V","E° = −0.83 V","E = −0.83 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.83 + (0.0592/2)·log(1/[OH⁻]²)","碱性介质析氢更难，E 更低","Hydrogen evolution is harder in alkaline media (lower E)")
+  ],
+  "Cl2":[
+    ep("酸性/中性溶液","acidic/neutral solution","Cl₂ + 2e⁻ ⇌ 2Cl⁻","Cl₂ + 2e⁻ ⇌ 2Cl⁻","E° = +1.36 V","E° = +1.36 V","E = 1.36 + (0.0592/2)·lg(p(Cl₂)/[Cl⁻]²)","E = 1.36 + (0.0592/2)·log(p(Cl₂)/[Cl⁻]²)","强氧化剂；氧化性随 [Cl⁻] 升高而减弱","Strong oxidant; oxidizing power decreases with higher [Cl⁻]")
+  ],
+  "Br2":[
+    ep("标准态（液态溴）","standard state (liquid Br₂)","Br₂ + 2e⁻ ⇌ 2Br⁻","Br₂ + 2e⁻ ⇌ 2Br⁻","E° = +1.09 V","E° = +1.09 V","E = 1.09 + (0.0592/2)·lg(1/[Br⁻]²)","E = 1.09 + (0.0592/2)·log(1/[Br⁻]²)","氧化性弱于 Cl₂，强于 I₂","Weaker oxidant than Cl₂, stronger than I₂")
+  ],
+  "I2":[
+    ep("标准态（固态碘）","standard state (solid I₂)","I₂ + 2e⁻ ⇌ 2I⁻","I₂ + 2e⁻ ⇌ 2I⁻","E° = +0.54 V","E° = +0.54 V","E = 0.54 + (0.0592/2)·lg(1/[I⁻]²)","E = 0.54 + (0.0592/2)·log(1/[I⁻]²)","氧化性较弱，I⁻ 易被氧化为 I₂","Weak oxidant; I⁻ is easily oxidized to I₂")
+  ],
+  "Cu":[
+    ep("酸性/中性溶液","acidic/neutral solution","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","随 [Cu²⁺] 升高电极电势增大；铜不溶于稀盐酸/稀硫酸","E rises with [Cu²⁺]; Cu does not dissolve in dilute HCl/H₂SO₄"),
+    ep("非水/固态（无溶液）","non-aqueous/solid (no solution)","—","—","无（金属单质自身无电对）","None (elemental metal has no couple)","—","—","固态铜需配合其盐溶液构成电极体系","Solid Cu forms an electrode only with a Cu²⁺ solution")
+  ],
+  "CuSO4":[
+    ep("水溶液（标准态）","aqueous (standard state)","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","Cu²⁺ 浓度越大，电极电势越高","Higher [Cu²⁺] gives higher electrode potential")
+  ],
+  "CuCl2":[
+    ep("水溶液","aqueous solution","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","同 Cu²⁺/Cu 电对","Same as Cu²⁺/Cu couple")
+  ],
+  "Cu(NO3)2":[
+    ep("水溶液","aqueous solution","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","同 Cu²⁺/Cu 电对；NO₃⁻ 在酸性时另显氧化性","Same Cu²⁺/Cu couple; NO₃⁻ is oxidizing only in acid")
+  ],
+  "CuO":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","固态 CuO 本身无电对，溶于酸后按 Cu²⁺/Cu 计","Solid CuO has no couple; treat as Cu²⁺/Cu after dissolving in acid")
+  ],
+  "Cu2O":[
+    ep("酸性溶液","acidic solution","Cu₂O + 2H⁺ + 2e⁻ ⇌ 2Cu + H₂O","Cu₂O + 2H⁺ + 2e⁻ ⇌ 2Cu + H₂O","E° = +0.47 V","E° = +0.47 V","E = 0.47 + (0.0592/2)·lg[H⁺]²","E = 0.47 + (0.0592/2)·log[H⁺]²","Cu(I) 在酸中发生歧化：Cu₂O → Cu²⁺ + Cu","Cu(I) disproportionates in acid: Cu₂O → Cu²⁺ + Cu")
+  ],
+  "Zn":[
+    ep("酸性/中性溶液","acidic/neutral solution","Zn²⁺ + 2e⁻ ⇌ Zn","Zn²⁺ + 2e⁻ ⇌ Zn","E° = −0.76 V","E° = −0.76 V","E = −0.76 + (0.0592/2)·lg[Zn²⁺]","E = −0.76 + (0.0592/2)·log[Zn²⁺]","较活泼金属，还原性强，可从酸中置换 H₂","Active metal, strong reducing agent; displaces H₂ from acids"),
+    ep("碱性溶液","alkaline solution","[Zn(OH)₄]²⁻ + 2e⁻ ⇌ Zn + 4OH⁻","[Zn(OH)₄]²⁻ + 2e⁻ ⇌ Zn + 4OH⁻","E° = −1.26 V","E° = −1.26 V","E = −1.26 + (0.0592/2)·lg([Zn(OH)₄²⁻]/[OH⁻]⁴)","E = −1.26 + (0.0592/2)·log([Zn(OH)₄²⁻]/[OH⁻]⁴)","两性金属，溶于强碱生成锌酸盐","Amphoteric metal; dissolves in strong base forming zincate")
+  ],
+  "ZnSO4":[
+    ep("水溶液","aqueous solution","Zn²⁺ + 2e⁻ ⇌ Zn","Zn²⁺ + 2e⁻ ⇌ Zn","E° = −0.76 V","E° = −0.76 V","E = −0.76 + (0.0592/2)·lg[Zn²⁺]","E = −0.76 + (0.0592/2)·log[Zn²⁺]","同 Zn²⁺/Zn 电对","Same Zn²⁺/Zn couple")
+  ],
+  "ZnCl2":[
+    ep("水溶液","aqueous solution","Zn²⁺ + 2e⁻ ⇌ Zn","Zn²⁺ + 2e⁻ ⇌ Zn","E° = −0.76 V","E° = −0.76 V","E = −0.76 + (0.0592/2)·lg[Zn²⁺]","E = −0.76 + (0.0592/2)·log[Zn²⁺]","同 Zn²⁺/Zn 电对","Same Zn²⁺/Zn couple")
+  ],
+  "ZnO":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Zn²⁺ + 2e⁻ ⇌ Zn","Zn²⁺ + 2e⁻ ⇌ Zn","E° = −0.76 V","E° = −0.76 V","E = −0.76 + (0.0592/2)·lg[Zn²⁺]","E = −0.76 + (0.0592/2)·log[Zn²⁺]","固态 ZnO 无电对；溶于酸后按 Zn²⁺/Zn 计","Solid ZnO has no couple; use Zn²⁺/Zn after dissolving")
+  ],
+  "Fe":[
+    ep("酸性/中性溶液","acidic/neutral solution","Fe²⁺ + 2e⁻ ⇌ Fe","Fe²⁺ + 2e⁻ ⇌ Fe","E° = −0.44 V","E° = −0.44 V","E = −0.44 + (0.0592/2)·lg[Fe²⁺]","E = −0.44 + (0.0592/2)·log[Fe²⁺]","活泼金属，还原性强；潮湿空气中易生锈","Active metal; easily rusts in moist air"),
+    ep("变价电对","variable-valence couple","Fe³⁺ + e⁻ ⇌ Fe²⁺","Fe³⁺ + e⁻ ⇌ Fe²⁺","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","Fe²⁺ 可被空气/氧化剂氧化为 Fe³⁺","Fe²⁺ can be oxidized to Fe³⁺ by air/oxidants")
+  ],
+  "FeCl2":[
+    ep("水溶液","aqueous solution","Fe²⁺ + 2e⁻ ⇌ Fe","Fe²⁺ + 2e⁻ ⇌ Fe","E° = −0.44 V","E° = −0.44 V","E = −0.44 + (0.0592/2)·lg[Fe²⁺]","E = −0.44 + (0.0592/2)·log[Fe²⁺]","Fe²⁺ 具还原性，易被氧化为 Fe³⁺","Fe²⁺ is reducing; easily oxidized to Fe³⁺")
+  ],
+  "FeCl3":[
+    ep("水溶液","aqueous solution","Fe³⁺ + e⁻ ⇌ Fe²⁺","Fe³⁺ + e⁻ ⇌ Fe²⁺","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","中等强度氧化剂，可氧化 Cu、I⁻ 等","Moderate oxidant; oxidizes Cu, I⁻, etc.")
+  ],
+  "FeSO4":[
+    ep("水溶液","aqueous solution","Fe²⁺ + 2e⁻ ⇌ Fe","Fe²⁺ + 2e⁻ ⇌ Fe","E° = −0.44 V","E° = −0.44 V","E = −0.44 + (0.0592/2)·lg[Fe²⁺]","E = −0.44 + (0.0592/2)·log[Fe²⁺]","Fe²⁺ 还原性，久置易氧化变质","Fe²⁺ is reducing; oxidizes on prolonged storage")
+  ],
+  "Fe2(SO4)3":[
+    ep("水溶液","aqueous solution","Fe³⁺ + e⁻ ⇌ Fe²⁺","Fe³⁺ + e⁻ ⇌ Fe²⁺","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","同 Fe³⁺/Fe²⁺ 电对","Same Fe³⁺/Fe²⁺ couple")
+  ],
+  "FeO":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Fe²⁺ + 2e⁻ ⇌ Fe","Fe²⁺ + 2e⁻ ⇌ Fe","E° = −0.44 V","E° = −0.44 V","E = −0.44 + (0.0592/2)·lg[Fe²⁺]","E = −0.44 + (0.0592/2)·log[Fe²⁺]","固态 FeO 无电对；Fe²⁺ 易被氧化为 Fe³⁺","Solid FeO has no couple; Fe²⁺ is easily oxidized to Fe³⁺")
+  ],
+  "Fe2O3":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Fe³⁺ + e⁻ ⇌ Fe²⁺","Fe³⁺ + e⁻ ⇌ Fe²⁺","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","溶于酸生成 Fe³⁺，具氧化性","Dissolves in acid to Fe³⁺, which is oxidizing")
+  ],
+  "Fe3O4":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Fe³⁺ + e⁻ ⇌ Fe²⁺（同时含 Fe²⁺/Fe）","Fe³⁺ + e⁻ ⇌ Fe²⁺ (also Fe²⁺/Fe)","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","Fe₃O₄ = FeO·Fe₂O₃（混合价），溶于酸得 Fe²⁺ 与 Fe³⁺ 的混合","Fe₃O₄ = FeO·Fe₂O₃ (mixed valence); dissolves to a Fe²⁺/Fe³⁺ mixture")
+  ],
+  "Fe(SCN)3":[
+    ep("水溶液","aqueous solution","Fe³⁺ + e⁻ ⇌ Fe²⁺","Fe³⁺ + e⁻ ⇌ Fe²⁺","E° = +0.77 V","E° = +0.77 V","E = 0.77 + 0.0592·lg([Fe³⁺]/[Fe²⁺])","E = 0.77 + 0.0592·log([Fe³⁺]/[Fe²⁺])","血红色配离子；氧化性由 Fe³⁺ 决定","Blood-red complex; oxidizing power governed by Fe³⁺")
+  ],
+  "K3[Fe(CN)6]":[
+    ep("水溶液","aqueous solution","[Fe(CN)₆]³⁻ + e⁻ ⇌ [Fe(CN)₆]⁴⁻","[Fe(CN)₆]³⁻ + e⁻ ⇌ [Fe(CN)₆]⁴⁻","E° = +0.36 V","E° = +0.36 V","E = 0.36 + 0.0592·lg([Fe(CN)₆³⁻]/[Fe(CN)₆⁴⁻])","E = 0.36 + 0.0592·log([Fe(CN)₆³⁻]/[Fe(CN)₆⁴⁻])","铁氰化钾（赤血盐）为中等氧化剂","Potassium ferricyanide is a moderate oxidant")
+  ],
+  "K4[Fe(CN)6]":[
+    ep("水溶液","aqueous solution","[Fe(CN)₆]³⁻ + e⁻ ⇌ [Fe(CN)₆]⁴⁻","[Fe(CN)₆]³⁻ + e⁻ ⇌ [Fe(CN)₆]⁴⁻","E° = +0.36 V","E° = +0.36 V","E = 0.36 + 0.0592·lg([Fe(CN)₆³⁻]/[Fe(CN)₆⁴⁻])","E = 0.36 + 0.0592·log([Fe(CN)₆³⁻]/[Fe(CN)₆⁴⁻])","亚铁氰化钾（黄血盐）为还原态，具还原性","Ferrocyanide is the reduced form (reducing)")
+  ],
+  "Ag":[
+    ep("酸性/中性溶液","acidic/neutral solution","Ag⁺ + e⁻ ⇌ Ag","Ag⁺ + e⁻ ⇌ Ag","E° = +0.80 V","E° = +0.80 V","E = 0.80 + 0.0592·lg[Ag⁺]","E = 0.80 + 0.0592·log[Ag⁺]","Ag 不活泼，不溶于稀盐酸/稀硫酸","Ag is noble; does not dissolve in dilute HCl/H₂SO₄"),
+    ep("与硫化物（硫化银）","with sulfide (Ag₂S)","Ag₂S + 2e⁻ ⇌ 2Ag + S²⁻","Ag₂S + 2e⁻ ⇌ 2Ag + S²⁻","E° = −0.69 V","E° = −0.69 V","E = −0.69 + (0.0592/2)·lg(1/[S²⁻])","E = −0.69 + (0.0592/2)·log(1/[S²⁻])","Ag 在含 S²⁻/H₂S 的空气中易变黑（生成 Ag₂S）","Ag tarnishes in air containing S²⁻/H₂S (forming Ag₂S)")
+  ],
+  "AgNO3":[
+    ep("水溶液","aqueous solution","Ag⁺ + e⁻ ⇌ Ag","Ag⁺ + e⁻ ⇌ Ag","E° = +0.80 V","E° = +0.80 V","E = 0.80 + 0.0592·lg[Ag⁺]","E = 0.80 + 0.0592·log[Ag⁺]","Ag⁺ 氧化性中等，光照下 AgNO₃ 分解析出 Ag","Ag⁺ is a moderate oxidant; AgNO₃ decomposes to Ag under light")
+  ],
+  "AgCl":[
+    ep("与金属银（银-氯化银电极）","with Ag metal (Ag/AgCl electrode)","AgCl + e⁻ ⇌ Ag + Cl⁻","AgCl + e⁻ ⇌ Ag + Cl⁻","E° = +0.22 V","E° = +0.22 V","E = 0.22 + 0.0592·lg(1/[Cl⁻])","E = 0.22 + 0.0592·log(1/[Cl⁻])","常用参比电极体系；E 随 [Cl⁻] 升高而降低","Common reference electrode; E decreases with higher [Cl⁻]")
+  ],
+  "AgBr":[
+    ep("与金属银","with Ag metal","AgBr + e⁻ ⇌ Ag + Br⁻","AgBr + e⁻ ⇌ Ag + Br⁻","E° = +0.07 V","E° = +0.07 V","E = 0.07 + 0.0592·lg(1/[Br⁻])","E = 0.07 + 0.0592·log(1/[Br⁻])","感光卤化银，光敏性强","Light-sensitive silver halide")
+  ],
+  "AgI":[
+    ep("与金属银","with Ag metal","AgI + e⁻ ⇌ Ag + I⁻","AgI + e⁻ ⇌ Ag + I⁻","E° = −0.15 V","E° = −0.15 V","E = −0.15 + 0.0592·lg(1/[I⁻])","E = −0.15 + 0.0592·log(1/[I⁻])","难溶盐电极；E 最低，AgI 溶解度最小","Insoluble-salt electrode; lowest E; AgI is the least soluble silver halide")
+  ],
+  "Ag2O":[
+    ep("碱性溶液","alkaline solution","Ag₂O + H₂O + 2e⁻ ⇌ 2Ag + 2OH⁻","Ag₂O + H₂O + 2e⁻ ⇌ 2Ag + 2OH⁻","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg(1/[OH⁻]²)","E = 0.34 + (0.0592/2)·log(1/[OH⁻]²)","银锌电池正极材料","Cathode material in silver-zinc batteries")
+  ],
+  "Ag2S":[
+    ep("与金属银","with Ag metal","Ag₂S + 2e⁻ ⇌ 2Ag + S²⁻","Ag₂S + 2e⁻ ⇌ 2Ag + S²⁻","E° = −0.69 V","E° = −0.69 V","E = −0.69 + (0.0592/2)·lg(1/[S²⁻])","E = −0.69 + (0.0592/2)·log(1/[S²⁻])","黑色难溶盐；银器变黑的原因","Black insoluble salt; cause of silver tarnishing")
+  ],
+  "Au":[
+    ep("酸性/中性溶液","acidic/neutral solution","Au³⁺ + 3e⁻ ⇌ Au","Au³⁺ + 3e⁻ ⇌ Au","E° = +1.50 V","E° = +1.50 V","E = 1.50 + (0.0592/3)·lg[Au³⁺]","E = 1.50 + (0.0592/3)·log[Au³⁺]","极不活泼；只溶于王水/氰化物溶液","Very noble; dissolves only in aqua regia/cyanide solutions")
+  ],
+  "Au(OH)3":[
+    ep("酸性/碱性溶液","acidic/alkaline solution","Au³⁺ + 3e⁻ ⇌ Au","Au³⁺ + 3e⁻ ⇌ Au","E° = +1.50 V","E° = +1.50 V","E = 1.50 + (0.0592/3)·lg[Au³⁺]","E = 1.50 + (0.0592/3)·log[Au³⁺]","Au(III) 强氧化性，易被还原为 Au","Au(III) is strongly oxidizing; easily reduced to Au")
+  ],
+  "Hg":[
+    ep("酸性/中性溶液","acidic/neutral solution","Hg²⁺ + 2e⁻ ⇌ Hg","Hg²⁺ + 2e⁻ ⇌ Hg","E° = +0.85 V","E° = +0.85 V","E = 0.85 + (0.0592/2)·lg[Hg²⁺]","E = 0.85 + (0.0592/2)·log[Hg²⁺]","不活泼液体金属，常温不与稀酸反应","Noble liquid metal; inert to dilute acids at room temperature"),
+    ep("亚汞电对","mercurous couple","Hg₂²⁺ + 2e⁻ ⇌ 2Hg","Hg₂²⁺ + 2e⁻ ⇌ 2Hg","E° = +0.79 V","E° = +0.79 V","E = 0.79 + (0.0592/2)·lg[Hg₂²⁺]","E = 0.79 + (0.0592/2)·log[Hg₂²⁺]","Hg₂²⁺ 在溶液中可歧化为 Hg²⁺ 与 Hg","Hg₂²⁺ can disproportionate to Hg²⁺ and Hg")
+  ],
+  "HgO":[
+    ep("碱性溶液","alkaline solution","HgO + H₂O + 2e⁻ ⇌ Hg + 2OH⁻","HgO + H₂O + 2e⁻ ⇌ Hg + 2OH⁻","E° = +0.10 V","E° = +0.10 V","E = 0.10 + (0.0592/2)·lg(1/[OH⁻]²)","E = 0.10 + (0.0592/2)·log(1/[OH⁻]²)","红色/黄色 HgO，氧化性弱","Red/yellow HgO is a weak oxidant")
+  ],
+  "Pb":[
+    ep("酸性/中性溶液","acidic/neutral solution","Pb²⁺ + 2e⁻ ⇌ Pb","Pb²⁺ + 2e⁻ ⇌ Pb","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/2)·lg[Pb²⁺]","E = −0.13 + (0.0592/2)·log[Pb²⁺]","较不活泼；与稀盐酸/稀硫酸反应生成难溶物而钝化","Fairly noble; passivated by insoluble PbCl₂/PbSO₄ in dilute HCl/H₂SO₄"),
+    ep("铅蓄电池","lead-acid battery","PbO₂ + SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ PbSO₄ + 2H₂O","PbO₂ + SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ PbSO₄ + 2H₂O","E° = +1.69 V","E° = +1.69 V","E = 1.69 + (0.0592/2)·lg([H⁺]⁴[SO₄²⁻])","E = 1.69 + (0.0592/2)·log([H⁺]⁴[SO₄²⁻])","铅蓄电池正极反应","Positive electrode reaction of lead-acid battery")
+  ],
+  "PbCl2":[
+    ep("水溶液","aqueous solution","Pb²⁺ + 2e⁻ ⇌ Pb","Pb²⁺ + 2e⁻ ⇌ Pb","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/2)·lg[Pb²⁺]","E = −0.13 + (0.0592/2)·log[Pb²⁺]","难溶于冷水","Sparingly soluble in cold water")
+  ],
+  "Pb(NO3)2":[
+    ep("水溶液","aqueous solution","Pb²⁺ + 2e⁻ ⇌ Pb","Pb²⁺ + 2e⁻ ⇌ Pb","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/2)·lg[Pb²⁺]","E = −0.13 + (0.0592/2)·log[Pb²⁺]","可溶性铅盐，剧毒","Soluble lead salt, highly toxic")
+  ],
+  "PbO2":[
+    ep("酸性溶液","acidic solution","PbO₂ + 4H⁺ + 2e⁻ ⇌ Pb²⁺ + 2H₂O","PbO₂ + 4H⁺ + 2e⁻ ⇌ Pb²⁺ + 2H₂O","E° = +1.46 V","E° = +1.46 V","E = 1.46 + (0.0592/2)·lg([H⁺]⁴/[Pb²⁺])","E = 1.46 + (0.0592/2)·log([H⁺]⁴/[Pb²⁺])","强氧化剂，可氧化 Mn²⁺→MnO₄⁻、浓 HCl→Cl₂","Strong oxidant; oxidizes Mn²⁺→MnO₄⁻, conc. HCl→Cl₂"),
+    ep("铅蓄电池（硫酸介质）","lead-acid battery (H₂SO₄)","PbO₂ + SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ PbSO₄ + 2H₂O","PbO₂ + SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ PbSO₄ + 2H₂O","E° = +1.69 V","E° = +1.69 V","E = 1.69 + (0.0592/2)·lg([H⁺]⁴[SO₄²⁻])","E = 1.69 + (0.0592/2)·log([H⁺]⁴[SO₄²⁻])","铅蓄电池正极","Lead-acid battery positive electrode")
+  ],
+  "PbO":[
+    ep("酸性溶液（溶于酸后）","acidic solution (after dissolving)","Pb²⁺ + 2e⁻ ⇌ Pb","Pb²⁺ + 2e⁻ ⇌ Pb","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/2)·lg[Pb²⁺]","E = −0.13 + (0.0592/2)·log[Pb²⁺]","固态 PbO 无电对；溶于酸后按 Pb²⁺/Pb 计","Solid PbO has no couple; use Pb²⁺/Pb after dissolving")
+  ],
+  "Pb3O4":[
+    ep("酸性溶液","acidic solution","PbO₂ + 4H⁺ + 2e⁻ ⇌ Pb²⁺ + 2H₂O（混合价 Pb₂PbO₄）","PbO₂ + 4H⁺ + 2e⁻ ⇌ Pb²⁺ + 2H₂O (Pb₂PbO₄)","E° = +1.46 V","E° = +1.46 V","E = 1.46 + (0.0592/2)·lg([H⁺]⁴/[Pb²⁺])","E = 1.46 + (0.0592/2)·log([H⁺]⁴/[Pb²⁺])","铅丹 = 2PbO·PbO₂，含 Pb(IV) 有氧化性","Red lead = 2PbO·PbO₂, contains oxidizing Pb(IV)")
+  ],
+  "Sn":[
+    ep("酸性/中性溶液","acidic/neutral solution","Sn²⁺ + 2e⁻ ⇌ Sn","Sn²⁺ + 2e⁻ ⇌ Sn","E° = −0.14 V","E° = −0.14 V","E = −0.14 + (0.0592/2)·lg[Sn²⁺]","E = −0.14 + (0.0592/2)·log[Sn²⁺]","较稳定；Sn²⁺ 具还原性","Fairly stable; Sn²⁺ is reducing")
+  ],
+  "SnCl2":[
+    ep("水溶液","aqueous solution","Sn²⁺ + 2e⁻ ⇌ Sn","Sn²⁺ + 2e⁻ ⇌ Sn","E° = −0.14 V","E° = −0.14 V","E = −0.14 + (0.0592/2)·lg[Sn²⁺]","E = −0.14 + (0.0592/2)·log[Sn²⁺]","Sn²⁺ 还原性，可被空气氧化为 Sn⁴⁺","Sn²⁺ is reducing; oxidized to Sn⁴⁺ by air"),
+    ep("Sn(IV)/Sn(II) 电对","Sn(IV)/Sn(II) couple","Sn⁴⁺ + 2e⁻ ⇌ Sn²⁺","Sn⁴⁺ + 2e⁻ ⇌ Sn²⁺","E° = +0.15 V","E° = +0.15 V","E = 0.15 + (0.0592/2)·lg([Sn⁴⁺]/[Sn²⁺])","E = 0.15 + (0.0592/2)·log([Sn⁴⁺]/[Sn²⁺])","SnCl₂ 是常用还原剂","SnCl₂ is a common reducing agent")
+  ],
+  "SnCl4":[
+    ep("水溶液","aqueous solution","Sn⁴⁺ + 2e⁻ ⇌ Sn²⁺","Sn⁴⁺ + 2e⁻ ⇌ Sn²⁺","E° = +0.15 V","E° = +0.15 V","E = 0.15 + (0.0592/2)·lg([Sn⁴⁺]/[Sn²⁺])","E = 0.15 + (0.0592/2)·log([Sn⁴⁺]/[Sn²⁺])","Sn(IV) 氧化性弱","Sn(IV) is a weak oxidant")
+  ],
+  "Ni":[
+    ep("酸性/中性溶液","acidic/neutral solution","Ni²⁺ + 2e⁻ ⇌ Ni","Ni²⁺ + 2e⁻ ⇌ Ni","E° = −0.26 V","E° = −0.26 V","E = −0.26 + (0.0592/2)·lg[Ni²⁺]","E = −0.26 + (0.0592/2)·log[Ni²⁺]","中等活泼金属","Moderately active metal")
+  ],
+  "NiCl2":[
+    ep("水溶液","aqueous solution","Ni²⁺ + 2e⁻ ⇌ Ni","Ni²⁺ + 2e⁻ ⇌ Ni","E° = −0.26 V","E° = −0.26 V","E = −0.26 + (0.0592/2)·lg[Ni²⁺]","E = −0.26 + (0.0592/2)·log[Ni²⁺]","同 Ni²⁺/Ni 电对","Same Ni²⁺/Ni couple")
+  ],
+  "NiSO4":[
+    ep("水溶液","aqueous solution","Ni²⁺ + 2e⁻ ⇌ Ni","Ni²⁺ + 2e⁻ ⇌ Ni","E° = −0.26 V","E° = −0.26 V","E = −0.26 + (0.0592/2)·lg[Ni²⁺]","E = −0.26 + (0.0592/2)·log[Ni²⁺]","同 Ni²⁺/Ni 电对","Same Ni²⁺/Ni couple")
+  ],
+  "Co":[
+    ep("酸性/中性溶液","acidic/neutral solution","Co²⁺ + 2e⁻ ⇌ Co","Co²⁺ + 2e⁻ ⇌ Co","E° = −0.28 V","E° = −0.28 V","E = −0.28 + (0.0592/2)·lg[Co²⁺]","E = −0.28 + (0.0592/2)·log[Co²⁺]","Co²⁺ 较稳定，Co³⁺ 强氧化","Co²⁺ is stable; Co³⁺ is a strong oxidant")
+  ],
+  "CoCl2":[
+    ep("水溶液","aqueous solution","Co²⁺ + 2e⁻ ⇌ Co","Co²⁺ + 2e⁻ ⇌ Co","E° = −0.28 V","E° = −0.28 V","E = −0.28 + (0.0592/2)·lg[Co²⁺]","E = −0.28 + (0.0592/2)·log[Co²⁺]","同 Co²⁺/Co 电对","Same Co²⁺/Co couple")
+  ],
+  "CoSO4":[
+    ep("水溶液","aqueous solution","Co²⁺ + 2e⁻ ⇌ Co","Co²⁺ + 2e⁻ ⇌ Co","E° = −0.28 V","E° = −0.28 V","E = −0.28 + (0.0592/2)·lg[Co²⁺]","E = −0.28 + (0.0592/2)·log[Co²⁺]","同 Co²⁺/Co 电对","Same Co²⁺/Co couple")
+  ],
+  "Mn":[
+    ep("酸性/中性溶液","acidic/neutral solution","Mn²⁺ + 2e⁻ ⇌ Mn","Mn²⁺ + 2e⁻ ⇌ Mn","E° = −1.18 V","E° = −1.18 V","E = −1.18 + (0.0592/2)·lg[Mn²⁺]","E = −1.18 + (0.0592/2)·log[Mn²⁺]","活泼金属，强还原性","Active metal, strongly reducing")
+  ],
+  "MnCl2":[
+    ep("水溶液","aqueous solution","Mn²⁺ + 2e⁻ ⇌ Mn","Mn²⁺ + 2e⁻ ⇌ Mn","E° = −1.18 V","E° = −1.18 V","E = −1.18 + (0.0592/2)·lg[Mn²⁺]","E = −1.18 + (0.0592/2)·log[Mn²⁺]","Mn²⁺ 在酸性中较稳定","Mn²⁺ is fairly stable in acid")
+  ],
+  "MnSO4":[
+    ep("水溶液","aqueous solution","Mn²⁺ + 2e⁻ ⇌ Mn","Mn²⁺ + 2e⁻ ⇌ Mn","E° = −1.18 V","E° = −1.18 V","E = −1.18 + (0.0592/2)·lg[Mn²⁺]","E = −1.18 + (0.0592/2)·log[Mn²⁺]","Mn²⁺ 可被强氧化剂氧化为 MnO₄⁻（需加热）","Mn²⁺ can be oxidized to MnO₄⁻ by strong oxidants (needs heating)")
+  ],
+  "MnO2":[
+    ep("酸性溶液","acidic solution","MnO₂ + 4H⁺ + 2e⁻ ⇌ Mn²⁺ + 2H₂O","MnO₂ + 4H⁺ + 2e⁻ ⇌ Mn²⁺ + 2H₂O","E° = +1.23 V","E° = +1.23 V","E = 1.23 + (0.0592/2)·lg([H⁺]⁴/[Mn²⁺])","E = 1.23 + (0.0592/2)·log([H⁺]⁴/[Mn²⁺])","MnO₂ 氧化性随酸度增大；可氧化浓 HCl 制 Cl₂","MnO₂'s oxidizing power grows with acidity; oxidizes conc. HCl to Cl₂"),
+    ep("碱性溶液","alkaline solution","MnO₂ + 2H₂O + 2e⁻ ⇌ Mn(OH)₂ + 2OH⁻","MnO₂ + 2H₂O + 2e⁻ ⇌ Mn(OH)₂ + 2OH⁻","E° = −0.05 V","E° = −0.05 V","E = −0.05 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.05 + (0.0592/2)·log(1/[OH⁻]²)","碱性介质中氧化性很弱","Very weak oxidant in alkaline media"),
+    ep("作电极材料（干电池）","as electrode material (dry cell)","MnO₂ + H₂O + e⁻ ⇌ MnOOH + OH⁻","MnO₂ + H₂O + e⁻ ⇌ MnOOH + OH⁻","E° ≈ +0.15 V（锌锰干电池正极）","E° ≈ +0.15 V (Zn-MnO₂ dry cell cathode)","—","—","锌锰干电池正极放电反应","Cathode discharge of Zn-MnO₂ dry cells")
+  ],
+  "Mn2O7":[
+    ep("与水反应","upon reacting with water","MnO₄⁻ + 8H⁺ + 5e⁻ ⇌ Mn²⁺ + 4H₂O","MnO₄⁻ + 8H⁺ + 5e⁻ ⇌ Mn²⁺ + 4H₂O","E° = +1.51 V","E° = +1.51 V","E = 1.51 + (0.0592/5)·lg([MnO₄⁻][H⁺]⁸/[Mn²⁺])","E = 1.51 + (0.0592/5)·log([MnO₄⁻][H⁺]⁸/[Mn²⁺])","高锰酸酐，遇水生成 HMnO₄，强氧化","Mn(VII) oxide; forms HMnO₄ in water, strongly oxidizing")
+  ],
+  "KMnO4":[
+    ep("酸性溶液","acidic solution","MnO₄⁻ + 8H⁺ + 5e⁻ ⇌ Mn²⁺ + 4H₂O","MnO₄⁻ + 8H⁺ + 5e⁻ ⇌ Mn²⁺ + 4H₂O","E° = +1.51 V","E° = +1.51 V","E = 1.51 + (0.0592/5)·lg([MnO₄⁻][H⁺]⁸/[Mn²⁺])","E = 1.51 + (0.0592/5)·log([MnO₄⁻][H⁺]⁸/[Mn²⁺])","强氧化剂；氧化性随 [H⁺] 八次方增强","Strong oxidant; oxidizing power scales with [H⁺]⁸"),
+    ep("中性/弱酸性溶液","neutral/weakly acidic solution","MnO₄⁻ + 2H₂O + 3e⁻ ⇌ MnO₂ + 4OH⁻","MnO₄⁻ + 2H₂O + 3e⁻ ⇌ MnO₂ + 4OH⁻","E° = +0.59 V","E° = +0.59 V","E = 0.59 + (0.0592/3)·lg([MnO₄⁻]/[OH⁻]⁴)","E = 0.59 + (0.0592/3)·log([MnO₄⁻]/[OH⁻]⁴)","中性/弱碱中还原产物为 MnO₂（棕褐色沉淀）","In neutral/weak base the product is MnO₂ (brown precipitate)"),
+    ep("碱性溶液","alkaline solution","MnO₄⁻ + e⁻ ⇌ MnO₄²⁻","MnO₄⁻ + e⁻ ⇌ MnO₄²⁻","E° = +0.56 V","E° = +0.56 V","E = 0.56 + 0.0592·lg([MnO₄⁻]/[MnO₄²⁻])","E = 0.56 + 0.0592·log([MnO₄⁻]/[MnO₄²⁻])","强碱中生成绿色锰酸盐 MnO₄²⁻","In strong base forms green manganate MnO₄²⁻")
+  ],
+  "Cr":[
+    ep("酸性/中性溶液","acidic/neutral solution","Cr³⁺ + 3e⁻ ⇌ Cr","Cr³⁺ + 3e⁻ ⇌ Cr","E° = −0.74 V","E° = −0.74 V","E = −0.74 + (0.0592/3)·lg[Cr³⁺]","E = −0.74 + (0.0592/3)·log[Cr³⁺]","活泼金属，但表面钝化","Active metal, but passivated on the surface")
+  ],
+  "CrCl3":[
+    ep("水溶液","aqueous solution","Cr³⁺ + 3e⁻ ⇌ Cr","Cr³⁺ + 3e⁻ ⇌ Cr","E° = −0.74 V","E° = −0.74 V","E = −0.74 + (0.0592/3)·lg[Cr³⁺]","E = −0.74 + (0.0592/3)·log[Cr³⁺]","Cr³⁺ 较稳定","Cr³⁺ is fairly stable")
+  ],
+  "Cr2(SO4)3":[
+    ep("水溶液","aqueous solution","Cr³⁺ + 3e⁻ ⇌ Cr","Cr³⁺ + 3e⁻ ⇌ Cr","E° = −0.74 V","E° = −0.74 V","E = −0.74 + (0.0592/3)·lg[Cr³⁺]","E = −0.74 + (0.0592/3)·log[Cr³⁺]","Cr³⁺ 在酸性中稳定","Cr³⁺ is stable in acid")
+  ],
+  "CrO3":[
+    ep("酸性溶液","acidic solution","Cr₂O₇²⁻ + 14H⁺ + 6e⁻ ⇌ 2Cr³⁺ + 7H₂O","Cr₂O₇²⁻ + 14H⁺ + 6e⁻ ⇌ 2Cr³⁺ + 7H₂O","E° = +1.33 V","E° = +1.33 V","E = 1.33 + (0.0592/6)·lg([Cr₂O₇²⁻][H⁺]¹⁴/[Cr³⁺]²)","E = 1.33 + (0.0592/6)·log([Cr₂O₇²⁻][H⁺]¹⁴/[Cr³⁺]²)","铬酐，强氧化剂；遇有机物剧烈反应","Chromic anhydride, strong oxidant; reacts violently with organics")
+  ],
+  "K2Cr2O7":[
+    ep("酸性溶液","acidic solution","Cr₂O₇²⁻ + 14H⁺ + 6e⁻ ⇌ 2Cr³⁺ + 7H₂O","Cr₂O₇²⁻ + 14H⁺ + 6e⁻ ⇌ 2Cr³⁺ + 7H₂O","E° = +1.33 V","E° = +1.33 V","E = 1.33 + (0.0592/6)·lg([Cr₂O₇²⁻][H⁺]¹⁴/[Cr³⁺]²)","E = 1.33 + (0.0592/6)·log([Cr₂O₇²⁻][H⁺]¹⁴/[Cr³⁺]²)","强氧化剂；氧化性随 [H⁺] 十四次方增强","Strong oxidant; oxidizing power scales with [H⁺]¹⁴"),
+    ep("碱性溶液","alkaline solution","CrO₄²⁻ + 4H₂O + 3e⁻ ⇌ Cr(OH)₃ + 5OH⁻","CrO₄²⁻ + 4H₂O + 3e⁻ ⇌ Cr(OH)₃ + 5OH⁻","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/3)·lg([CrO₄²⁻]/[OH⁻]⁵)","E = −0.13 + (0.0592/3)·log([CrO₄²⁻]/[OH⁻]⁵)","碱性中氧化性弱，Cr(VI)→Cr(III)","Weak oxidant in base; Cr(VI)→Cr(III)")
+  ],
+  "Al":[
+    ep("酸性溶液","acidic solution","Al³⁺ + 3e⁻ ⇌ Al","Al³⁺ + 3e⁻ ⇌ Al","E° = −1.66 V","E° = −1.66 V","E = −1.66 + (0.0592/3)·lg[Al³⁺]","E = −1.66 + (0.0592/3)·log[Al³⁺]","很活泼，但因表面致密氧化膜而抗腐蚀","Very active, but corrosion-resistant due to a dense oxide film"),
+    ep("碱性溶液","alkaline solution","Al(OH)₃ + 3e⁻ ⇌ Al + 3OH⁻","Al(OH)₃ + 3e⁻ ⇌ Al + 3OH⁻","E° = −2.31 V","E° = −2.31 V","E = −2.31 + (0.0592/3)·lg(1/[OH⁻]³)","E = −2.31 + (0.0592/3)·log(1/[OH⁻]³)","两性金属，溶于强碱放出 H₂","Amphoteric metal; dissolves in strong base releasing H₂")
+  ],
+  "AlCl3":[
+    ep("水溶液","aqueous solution","Al³⁺ + 3e⁻ ⇌ Al","Al³⁺ + 3e⁻ ⇌ Al","E° = −1.66 V","E° = −1.66 V","E = −1.66 + (0.0592/3)·lg[Al³⁺]","E = −1.66 + (0.0592/3)·log[Al³⁺]","Al³⁺ 极难被还原","Al³⁺ is very hard to reduce")
+  ],
+  "Al2(SO4)3":[
+    ep("水溶液","aqueous solution","Al³⁺ + 3e⁻ ⇌ Al","Al³⁺ + 3e⁻ ⇌ Al","E° = −1.66 V","E° = −1.66 V","E = −1.66 + (0.0592/3)·lg[Al³⁺]","E = −1.66 + (0.0592/3)·log[Al³⁺]","同 Al³⁺/Al 电对","Same Al³⁺/Al couple")
+  ],
+  "Al2O3":[
+    ep("固态（熔融电解）","solid (molten electrolysis)","Al³⁺ + 3e⁻ ⇌ Al","Al³⁺ + 3e⁻ ⇌ Al","E° = −1.66 V（熔融电解实际应用）","E° = −1.66 V (used in molten electrolysis)","—","—","工业电解熔融 Al₂O₃ 冶炼铝","Aluminum is produced industrially by molten electrolysis of Al₂O₃")
+  ],
+  "Mg":[
+    ep("酸性/中性溶液","acidic/neutral solution","Mg²⁺ + 2e⁻ ⇌ Mg","Mg²⁺ + 2e⁻ ⇌ Mg","E° = −2.37 V","E° = −2.37 V","E = −2.37 + (0.0592/2)·lg[Mg²⁺]","E = −2.37 + (0.0592/2)·log[Mg²⁺]","很活泼，与水/酸反应放出 H₂","Very active; releases H₂ with water/acids")
+  ],
+  "MgCl2":[
+    ep("水溶液","aqueous solution","Mg²⁺ + 2e⁻ ⇌ Mg","Mg²⁺ + 2e⁻ ⇌ Mg","E° = −2.37 V","E° = −2.37 V","E = −2.37 + (0.0592/2)·lg[Mg²⁺]","E = −2.37 + (0.0592/2)·log[Mg²⁺]","Mg²⁺ 极难被还原","Mg²⁺ is extremely hard to reduce")
+  ],
+  "MgSO4":[
+    ep("水溶液","aqueous solution","Mg²⁺ + 2e⁻ ⇌ Mg","Mg²⁺ + 2e⁻ ⇌ Mg","E° = −2.37 V","E° = −2.37 V","E = −2.37 + (0.0592/2)·lg[Mg²⁺]","E = −2.37 + (0.0592/2)·log[Mg²⁺]","同 Mg²⁺/Mg 电对","Same Mg²⁺/Mg couple")
+  ],
+  "MgO":[
+    ep("固态（无溶液）","solid (no solution)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","惰性氧化物，无电极反应","Inert oxide, no electrode reaction")
+  ],
+  "Ca":[
+    ep("酸性/中性溶液","acidic/neutral solution","Ca²⁺ + 2e⁻ ⇌ Ca","Ca²⁺ + 2e⁻ ⇌ Ca","E° = −2.87 V","E° = −2.87 V","E = −2.87 + (0.0592/2)·lg[Ca²⁺]","E = −2.87 + (0.0592/2)·log[Ca²⁺]","很活泼，遇水即反应","Very active; reacts with water immediately")
+  ],
+  "CaCl2":[
+    ep("水溶液","aqueous solution","Ca²⁺ + 2e⁻ ⇌ Ca","Ca²⁺ + 2e⁻ ⇌ Ca","E° = −2.87 V","E° = −2.87 V","E = −2.87 + (0.0592/2)·lg[Ca²⁺]","E = −2.87 + (0.0592/2)·log[Ca²⁺]","Ca²⁺ 极难被还原","Ca²⁺ is extremely hard to reduce")
+  ],
+  "CaCO3":[
+    ep("固态（无溶液）","solid (no solution)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钙盐，无电极反应","Calcium salt, no electrode reaction")
+  ],
+  "CaO":[
+    ep("固态（无溶液）","solid (no solution)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碱性氧化物，无电极反应","Basic oxide, no electrode reaction")
+  ],
+  "Na":[
+    ep("非水（熔融/液氨）","non-aqueous (molten/liquid NH₃)","Na⁺ + e⁻ ⇌ Na","Na⁺ + e⁻ ⇌ Na","E° = −2.71 V","E° = −2.71 V","E = −2.71 + 0.0592·lg[Na⁺]","E = −2.71 + 0.0592·log[Na⁺]","在水中剧烈反应，电极体系只能以非水介质讨论","Reacts violently with water; electrode system is only discussed in non-aqueous media")
+  ],
+  "K":[
+    ep("非水（熔融/液氨）","non-aqueous (molten/liquid NH₃)","K⁺ + e⁻ ⇌ K","K⁺ + e⁻ ⇌ K","E° = −2.93 V","E° = −2.93 V","E = −2.93 + 0.0592·lg[K⁺]","E = −2.93 + 0.0592·log[K⁺]","与水剧烈反应，仅非水介质讨论","Reacts violently with water; non-aqueous media only")
+  ],
+  "Pt":[
+    ep("惰性电极","inert electrode","—（Pt 自身不参与氧化还原）","— (Pt itself is not redox-active)","无","None","—","—","常作惰性电极承载其他电对（如 H⁺/H₂、Fe³⁺/Fe²⁺）","Often used as an inert electrode carrying other couples (H⁺/H₂, Fe³⁺/Fe²⁺)")
+  ],
+  "HNO3":[
+    ep("稀硝酸","dilute HNO₃","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","稀硝酸的还原产物通常为 NO","Dilute HNO₃ is usually reduced to NO"),
+    ep("浓硝酸","concentrated HNO₃","NO₃⁻ + 2H⁺ + e⁻ ⇌ NO₂ + H₂O","NO₃⁻ + 2H⁺ + e⁻ ⇌ NO₂ + H₂O","E° = +0.80 V","E° = +0.80 V","E = 0.80 + 0.0592·lg([NO₃⁻][H⁺]²/p(NO₂))","E = 0.80 + 0.0592·log([NO₃⁻][H⁺]²/p(NO₂))","浓硝酸还原产物通常为 NO₂（红棕色）","Conc. HNO₃ is usually reduced to NO₂ (red-brown)")
+  ],
+  "HNO2":[
+    ep("酸性溶液","acidic solution","NO₂⁻ + 2H⁺ + e⁻ ⇌ NO + H₂O","NO₂⁻ + 2H⁺ + e⁻ ⇌ NO + H₂O","E° = +1.00 V","E° = +1.00 V","E = 1.00 + 0.0592·lg([NO₂⁻][H⁺]²/p(NO))","E = 1.00 + 0.0592·log([NO₂⁻][H⁺]²/p(NO))","HNO₂ 不稳定，既氧化又还原（歧化）","HNO₂ is unstable; both oxidizing and reducing (disproportionation)")
+  ],
+  "KNO3":[
+    ep("酸性溶液","acidic solution","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","硝酸盐只在酸性介质中显氧化性","Nitrate is oxidizing only in acidic media")
+  ],
+  "NaNO3":[
+    ep("酸性溶液","acidic solution","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","酸性介质才显氧化性","Oxidizing only in acidic media")
+  ],
+  "Ca(NO3)2":[
+    ep("酸性溶液","acidic solution","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","同硝酸盐酸性氧化性","Same as nitrate oxidizing behavior in acid")
+  ],
+  "Mg(NO3)2":[
+    ep("酸性溶液","acidic solution","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","同硝酸盐酸性氧化性","Same as nitrate oxidizing behavior in acid")
+  ],
+  "H2SO4":[
+    ep("稀硫酸","dilute H₂SO₄","2H⁺ + 2e⁻ ⇌ H₂","2H⁺ + 2e⁻ ⇌ H₂","E° = 0.00 V","E° = 0.00 V","E = (0.0592/2)·lg([H⁺]²/p(H₂))","E = (0.0592/2)·log([H⁺]²/p(H₂))","稀硫酸无氧化性，仅体现酸性与 H⁺","Dilute H₂SO₄ is non-oxidizing (only acidic)"),
+    ep("浓硫酸（热）","concentrated H₂SO₄ (hot)","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O","E° = +0.17 V","E° = +0.17 V","E = 0.17 + (0.0592/2)·lg([SO₄²⁻][H⁺]⁴/p(SO₂))","E = 0.17 + (0.0592/2)·log([SO₄²⁻][H⁺]⁴/p(SO₂))","热浓硫酸是氧化性酸，还原产物为 SO₂","Hot conc. H₂SO₄ is oxidizing; reduced to SO₂")
+  ],
+  "H2SO3":[
+    ep("酸性溶液","acidic solution","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O","E° = +0.17 V","E° = +0.17 V","E = 0.17 + (0.0592/2)·lg([SO₄²⁻][H⁺]⁴/p(SO₂))","E = 0.17 + (0.0592/2)·log([SO₄²⁻][H⁺]⁴/p(SO₂))","亚硫酸兼有氧化性与还原性","Sulfurous acid is both oxidizing and reducing")
+  ],
+  "Na2SO3":[
+    ep("水溶液（作还原剂）","aqueous (as reducing agent)","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O（逆向为氧化）","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O (reverse: oxidation)","E° = +0.17 V","E° = +0.17 V","—","—","SO₃²⁻ 易被空气/氧化剂氧化为 SO₄²⁻","SO₃²⁻ is easily oxidized to SO₄²⁻ by air/oxidants")
+  ],
+  "Na2S":[
+    ep("碱性/水溶液","alkaline/aqueous","S + 2e⁻ ⇌ S²⁻","S + 2e⁻ ⇌ S²⁻","E° = −0.48 V","E° = −0.48 V","E = −0.48 + (0.0592/2)·lg(1/[S²⁻])","E = −0.48 + (0.0592/2)·log(1/[S²⁻])","S²⁻ 强还原性，易被氧化为 S","S²⁻ is strongly reducing; easily oxidized to S")
+  ],
+  "H2S":[
+    ep("酸性溶液","acidic solution","S + 2H⁺ + 2e⁻ ⇌ H₂S","S + 2H⁺ + 2e⁻ ⇌ H₂S","E° = +0.14 V","E° = +0.14 V","E = 0.14 + (0.0592/2)·lg([H⁺]²/p(H₂S))","E = 0.14 + (0.0592/2)·log([H⁺]²/p(H₂S))","H₂S 是还原性气体，可被氧化为 S","H₂S is a reducing gas; can be oxidized to S")
+  ],
+  "NaClO":[
+    ep("碱性/中性溶液","alkaline/neutral solution","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","E° = +0.89 V","E° = +0.89 V","E = 0.89 + (0.0592/2)·lg([ClO⁻]/[Cl⁻][OH⁻]²)","E = 0.89 + (0.0592/2)·log([ClO⁻]/[Cl⁻][OH⁻]²)","漂白/消毒有效成分；酸性中氧化性更强（生成 HClO）","Active bleach/disinfectant; more oxidizing in acid (HClO)")
+  ],
+  "Ca(ClO)2":[
+    ep("碱性/中性溶液","alkaline/neutral solution","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","E° = +0.89 V","E° = +0.89 V","E = 0.89 + (0.0592/2)·lg([ClO⁻]/[Cl⁻][OH⁻]²)","E = 0.89 + (0.0592/2)·log([ClO⁻]/[Cl⁻][OH⁻]²)","漂白粉有效成分，遇酸放氯","Bleaching powder; releases Cl₂ on acidification")
+  ],
+  "KClO3":[
+    ep("酸性溶液","acidic solution","ClO₃⁻ + 6H⁺ + 6e⁻ ⇌ Cl⁻ + 3H₂O","ClO₃⁻ + 6H⁺ + 6e⁻ ⇌ Cl⁻ + 3H₂O","E° = +1.45 V","E° = +1.45 V","E = 1.45 + (0.0592/6)·lg([ClO₃⁻][H⁺]⁶/[Cl⁻])","E = 1.45 + (0.0592/6)·log([ClO₃⁻][H⁺]⁶/[Cl⁻])","强氧化剂；与可燃物混合受热爆炸","Strong oxidant; explodes with combustibles on heating")
+  ],
+  "KClO4":[
+    ep("酸性溶液","acidic solution","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","E° = +1.39 V","E° = +1.39 V","E = 1.39 + (0.0592/8)·lg([ClO₄⁻][H⁺]⁸/[Cl⁻])","E = 1.39 + (0.0592/8)·log([ClO₄⁻][H⁺]⁸/[Cl⁻])","高氯酸盐常温较稳定，高温强氧化","Perchlorate is stable at RT; strong oxidant at high temperature")
+  ],
+  "HClO":[
+    ep("酸性溶液","acidic solution","HClO + H⁺ + 2e⁻ ⇌ Cl⁻ + H₂O","HClO + H⁺ + 2e⁻ ⇌ Cl⁻ + H₂O","E° = +1.48 V","E° = +1.48 V","E = 1.48 + (0.0592/2)·lg([HClO][H⁺]/[Cl⁻])","E = 1.48 + (0.0592/2)·log([HClO][H⁺]/[Cl⁻])","次氯酸强氧化，漂白原理","Hypochlorous acid is strongly oxidizing (bleaching)")
+  ],
+  "HClO2":[
+    ep("酸性溶液","acidic solution","HClO₂ + 3H⁺ + 4e⁻ ⇌ Cl⁻ + 2H₂O","HClO₂ + 3H⁺ + 4e⁻ ⇌ Cl⁻ + 2H₂O","E° = +1.57 V","E° = +1.57 V","E = 1.57 + (0.0592/4)·lg([HClO₂][H⁺]³/[Cl⁻])","E = 1.57 + (0.0592/4)·log([HClO₂][H⁺]³/[Cl⁻])","亚氯酸不稳定，强氧化","Chlorous acid is unstable and strongly oxidizing")
+  ],
+  "HClO3":[
+    ep("酸性溶液","acidic solution","ClO₃⁻ + 6H⁺ + 6e⁻ ⇌ Cl⁻ + 3H₂O","ClO₃⁻ + 6H⁺ + 6e⁻ ⇌ Cl⁻ + 3H₂O","E° = +1.45 V","E° = +1.45 V","E = 1.45 + (0.0592/6)·lg([ClO₃⁻][H⁺]⁶/[Cl⁻])","E = 1.45 + (0.0592/6)·log([ClO₃⁻][H⁺]⁶/[Cl⁻])","氯酸强氧化","Chloric acid is strongly oxidizing")
+  ],
+  "HClO4":[
+    ep("酸性溶液","acidic solution","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","E° = +1.39 V","E° = +1.39 V","E = 1.39 + (0.0592/8)·lg([ClO₄⁻][H⁺]⁸/[Cl⁻])","E = 1.39 + (0.0592/8)·log([ClO₄⁻][H⁺]⁸/[Cl⁻])","最强无机酸之一，浓高氯酸强氧化","One of the strongest acids; conc. HClO₄ is strongly oxidizing")
+  ],
+  "HCl":[
+    ep("酸性溶液","acidic solution","2H⁺ + 2e⁻ ⇌ H₂","2H⁺ + 2e⁻ ⇌ H₂","E° = 0.00 V","E° = 0.00 V","E = (0.0592/2)·lg([H⁺]²/p(H₂))","E = (0.0592/2)·log([H⁺]²/p(H₂))","盐酸无氧化性；Cl⁻ 有弱还原性","HCl is non-oxidizing; Cl⁻ is weakly reducing")
+  ],
+  "HBr":[
+    ep("酸性溶液","acidic solution","Br₂ + 2e⁻ ⇌ 2Br⁻","Br₂ + 2e⁻ ⇌ 2Br⁻","E° = +1.09 V","E° = +1.09 V","E = 1.09 + (0.0592/2)·lg(1/[Br⁻]²)","E = 1.09 + (0.0592/2)·log(1/[Br⁻]²)","Br⁻ 还原性比 Cl⁻ 强","Br⁻ is a stronger reductant than Cl⁻")
+  ],
+  "HI":[
+    ep("酸性溶液","acidic solution","I₂ + 2e⁻ ⇌ 2I⁻","I₂ + 2e⁻ ⇌ 2I⁻","E° = +0.54 V","E° = +0.54 V","E = 0.54 + (0.0592/2)·lg(1/[I⁻]²)","E = 0.54 + (0.0592/2)·log(1/[I⁻]²)","I⁻ 还原性强，HI 可被空气氧化","I⁻ is strongly reducing; HI is oxidized by air")
+  ],
+  "HF":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","弱酸，F⁻ 极难被氧化","Weak acid; F⁻ is very hard to oxidize")
+  ],
+  "NaCl":[
+    ep("水溶液/熔融电解","aqueous/molten electrolysis","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻（水溶液）；Na⁺ + e⁻ ⇌ Na（熔融）","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻ (aq); Na⁺ + e⁻ ⇌ Na (molten)","E°(Na⁺/Na) = −2.71 V","E°(Na⁺/Na) = −2.71 V","E = −2.71 + 0.0592·lg[Na⁺]（熔融）","E = −2.71 + 0.0592·log[Na⁺] (molten)","电解熔融 NaCl 制 Na；电解食盐水制 Cl₂/H₂/NaOH","Molten NaCl electrolysis yields Na; brine electrolysis yields Cl₂/H₂/NaOH")
+  ],
+  "KCl":[
+    ep("水溶液/熔融电解","aqueous/molten electrolysis","K⁺ + e⁻ ⇌ K（熔融）","K⁺ + e⁻ ⇌ K (molten)","E° = −2.93 V","E° = −2.93 V","E = −2.93 + 0.0592·lg[K⁺]","E = −2.93 + 0.0592·log[K⁺]","电解熔融 KCl 制 K","Molten KCl electrolysis yields K")
+  ],
+  "NaBr":[
+    ep("水溶液","aqueous solution","Br₂ + 2e⁻ ⇌ 2Br⁻","Br₂ + 2e⁻ ⇌ 2Br⁻","E° = +1.09 V","E° = +1.09 V","E = 1.09 + (0.0592/2)·lg(1/[Br⁻]²)","E = 1.09 + (0.0592/2)·log(1/[Br⁻]²)","Br⁻ 可被 Cl₂ 氧化为 Br₂","Br⁻ can be oxidized to Br₂ by Cl₂")
+  ],
+  "KBr":[
+    ep("水溶液","aqueous solution","Br₂ + 2e⁻ ⇌ 2Br⁻","Br₂ + 2e⁻ ⇌ 2Br⁻","E° = +1.09 V","E° = +1.09 V","E = 1.09 + (0.0592/2)·lg(1/[Br⁻]²)","E = 1.09 + (0.0592/2)·log(1/[Br⁻]²)","Br⁻ 可被 Cl₂ 氧化为 Br₂","Br⁻ can be oxidized to Br₂ by Cl₂")
+  ],
+  "NaI":[
+    ep("水溶液","aqueous solution","I₂ + 2e⁻ ⇌ 2I⁻","I₂ + 2e⁻ ⇌ 2I⁻","E° = +0.54 V","E° = +0.54 V","E = 0.54 + (0.0592/2)·lg(1/[I⁻]²)","E = 0.54 + (0.0592/2)·log(1/[I⁻]²)","I⁻ 易被氧化（空气、Cl₂、Fe³⁺）","I⁻ is easily oxidized (by air, Cl₂, Fe³⁺)")
+  ],
+  "KI":[
+    ep("水溶液","aqueous solution","I₂ + 2e⁻ ⇌ 2I⁻","I₂ + 2e⁻ ⇌ 2I⁻","E° = +0.54 V","E° = +0.54 V","E = 0.54 + (0.0592/2)·lg(1/[I⁻]²)","E = 0.54 + (0.0592/2)·log(1/[I⁻]²)","I⁻ 强还原性；KI 淀粉试纸遇氧化剂变蓝","I⁻ is strongly reducing; starch-KI paper turns blue with oxidants")
+  ],
+  "Na2SO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钠盐，无电极反应","Sodium salt, no electrode reaction")
+  ],
+  "K2SO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钾盐，无电极反应","Potassium salt, no electrode reaction")
+  ],
+  "BaCl2":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钡盐，无电极反应","Barium salt, no electrode reaction")
+  ],
+  "BaSO4":[
+    ep("固态/水溶液","solid/aqueous","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","难溶盐，无电极反应","Insoluble salt, no electrode reaction")
+  ],
+  "BaCO3":[
+    ep("固态","solid","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","难溶盐，无电极反应","Insoluble salt, no electrode reaction")
+  ],
+  "SO2":[
+    ep("水溶液（亚硫酸）","aqueous (sulfurous acid)","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O（SO₂ 为还原态）","SO₄²⁻ + 4H⁺ + 2e⁻ ⇌ SO₂ + 2H₂O (SO₂ is reduced form)","E° = +0.17 V","E° = +0.17 V","—","—","SO₂ 具还原性，可使品红褪色，也可被强还原剂还原","SO₂ is reducing; decolorizes magenta, also reducible by strong reductants")
+  ],
+  "SO3":[
+    ep("遇水成 H₂SO₄","upon hydration","—","—","无（非氧化还原体系，酸酐）","None (acid anhydride, non-redox)","—","—","SO₃ 溶于水生成 H₂SO₄","SO₃ dissolves in water forming H₂SO₄")
+  ],
+  "CO":[
+    ep("气体（作还原剂）","gas (as reducing agent)","CO₂ + 2H⁺ + 2e⁻ ⇌ CO + H₂O（热力学不占优）","CO₂ + 2H⁺ + 2e⁻ ⇌ CO + H₂O (not thermodynamically favored)","—","—","—","—","CO 是重要还原剂（冶金），但电化学数据稀少","CO is an important reductant (metallurgy) though electrochemically ill-defined")
+  ],
+  "CO2":[
+    ep("水溶液/气体","aqueous/gas","—","—","无（通常非氧化还原体系）","None (usually non-redox)","—","—","CO₂ 中 C 为最高价 +4，无还原性","C is at +4 in CO₂ (highest); no reducing power")
+  ],
+  "NO":[
+    ep("气体","gas","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O（NO 为还原产物）","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O (NO is reduced product)","E° = +0.96 V","E° = +0.96 V","—","—","NO 在空气中被氧化为 NO₂（红棕色）","NO is oxidized by air to NO₂ (red-brown)")
+  ],
+  "NO2":[
+    ep("气体/水溶液","gas/aqueous","NO₃⁻ + 2H⁺ + e⁻ ⇌ NO₂ + H₂O","NO₃⁻ + 2H⁺ + e⁻ ⇌ NO₂ + H₂O","E° = +0.80 V","E° = +0.80 V","—","—","NO₂ 遇水歧化为 HNO₃ 与 HNO₂","NO₂ disproportionates in water to HNO₃ and HNO₂")
+  ],
+  "N2O":[
+    ep("气体","gas","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","笑气，常温极稳定","Nitrous oxide, very stable at RT")
+  ],
+  "Ag2CO3":[
+    ep("与金属银","with Ag metal","Ag₂CO₃ + 2e⁻ ⇌ 2Ag + CO₃²⁻","Ag₂CO₃ + 2e⁻ ⇌ 2Ag + CO₃²⁻","E° ≈ +0.47 V","E° ≈ +0.47 V","—","—","银盐，遇光分解","Silver salt, photodegradable")
+  ],
+  "Ag3PO4":[
+    ep("与金属银","with Ag metal","Ag₃PO₄ + 3e⁻ ⇌ 3Ag + PO₄³⁻","Ag₃PO₄ + 3e⁻ ⇌ 3Ag + PO₄³⁻","E° ≈ +0.47 V","E° ≈ +0.47 V","—","—","黄色难溶银盐","Yellow insoluble silver salt")
+  ],
+  "CuS":[
+    ep("酸性溶液","acidic solution","CuS + 2H⁺ + 2e⁻ ⇌ Cu + H₂S","CuS + 2H⁺ + 2e⁻ ⇌ Cu + H₂S","E° ≈ +0.70 V（取决于[S²⁻]）","E° ≈ +0.70 V (depends on [S²⁻])","E = E° + (0.0592/2)·lg([H⁺]²/p(H₂S))","E = E° + (0.0592/2)·log([H⁺]²/p(H₂S))","黑色难溶硫化物","Black insoluble sulfide")
+  ],
+  "ZnS":[
+    ep("与金属锌","with Zn metal","ZnS + 2e⁻ ⇌ Zn + S²⁻","ZnS + 2e⁻ ⇌ Zn + S²⁻","E° ≈ −1.44 V（估算）","E° ≈ −1.44 V (estimated)","—","—","白色荧光难溶硫化物","White, fluorescent insoluble sulfide")
+  ],
+  "HgS":[
+    ep("固态（极难溶）","solid (extremely insoluble)","—","—","无常用电极数据","No common electrode data","—","—","辰砂，极难溶","Cinnabar, extremely insoluble")
+  ],
+  "MnS":[
+    ep("与金属锰","with Mn metal","MnS + 2e⁻ ⇌ Mn + S²⁻","MnS + 2e⁻ ⇌ Mn + S²⁻","E° ≈ −1.5 V（估算）","E° ≈ −1.5 V (estimated)","—","—","粉红色难溶硫化物","Pink insoluble sulfide")
+  ],
+  "NiS":[
+    ep("与金属镍","with Ni metal","NiS + 2e⁻ ⇌ Ni + S²⁻","NiS + 2e⁻ ⇌ Ni + S²⁻","E° ≈ −0.9 V（估算）","E° ≈ −0.9 V (estimated)","—","—","黑色难溶硫化物","Black insoluble sulfide")
+  ],
+  "CoS":[
+    ep("与金属钴","with Co metal","CoS + 2e⁻ ⇌ Co + S²⁻","CoS + 2e⁻ ⇌ Co + S²⁻","E° ≈ −0.9 V（估算）","E° ≈ −0.9 V (estimated)","—","—","黑色难溶硫化物","Black insoluble sulfide")
+  ],
+  "PbS":[
+    ep("与金属铅","with Pb metal","PbS + 2e⁻ ⇌ Pb + S²⁻","PbS + 2e⁻ ⇌ Pb + S²⁻","E° ≈ −0.95 V（估算）","E° ≈ −0.95 V (estimated)","—","—","黑色难溶硫化物","Black insoluble sulfide")
+  ],
+  "NH3":[
+    ep("水溶液","aqueous solution","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻","E° = −0.73 V","E° = −0.73 V","E = −0.73 + (0.0592/6)·lg(1/[NH₃]²[OH⁻]⁶)","E = −0.73 + (0.0592/6)·log(1/[NH₃]²[OH⁻]⁶)","NH₃ 中 N 为 −3 最低价，作还原剂","N is at −3 (lowest) in NH₃; acts as a reductant")
+  ],
+  "NH4Cl":[
+    ep("水溶液","aqueous solution","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻（NH₄⁺ 为还原态）","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻ (NH₄⁺ reduced form)","E° = −0.73 V","E° = −0.73 V","—","—","铵盐中 N 为 −3，具弱还原性","N is −3 in ammonium; weakly reducing")
+  ],
+  "NH4NO3":[
+    ep("水溶液","aqueous solution","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O（硝酸根氧化性）","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O (nitrate oxidizing)","E° = +0.96 V","E° = +0.96 V","E = 0.96 + (0.0592/3)·lg([NO₃⁻][H⁺]⁴/p(NO))","E = 0.96 + (0.0592/3)·log([NO₃⁻][H⁺]⁴/p(NO))","同含硝酸根 + 铵根的氧化/还原性质","Combines nitrate oxidizing and ammonium reducing character")
+  ],
+  "H2O":[
+    ep("标准态","standard state","2H⁺ + 2e⁻ ⇌ H₂（阴极）；O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O（阳极）","2H⁺ + 2e⁻ ⇌ H₂ (cathode); O₂ + 4H⁺ + 4e⁻ ⇌ 2H₂O (anode)","E°(H⁺/H₂)=0.00 V；E°(O₂/H₂O)=+1.23 V","E°(H⁺/H₂)=0.00 V; E°(O₂/H₂O)=+1.23 V","E(H⁺/H₂) = −0.0592·pH；E(O₂/H₂O) = 1.23 − 0.0592·pH","E(H⁺/H₂) = −0.0592·pH; E(O₂/H₂O) = 1.23 − 0.0592·pH","水的分解电压约 1.23 V（理论）；电解实际约 1.8 V","Water decomposition ~1.23 V (theoretical); ~1.8 V practically in electrolysis")
+  ],
+  "CH4":[
+    ep("非水（燃料电池）","non-aqueous (fuel cell)","CO₂ + 8H⁺ + 8e⁻ ⇌ CH₄ + 2H₂O","CO₂ + 8H⁺ + 8e⁻ ⇌ CH₄ + 2H₂O","E° ≈ +0.17 V","E° ≈ +0.17 V","—","—","甲烷本身无水中电对；作燃料时燃烧","CH₄ has no aqueous couple; used as fuel via combustion")
+  ],
+  "C2H5OH":[
+    ep("非水（氧化反应）","non-aqueous (oxidation)","—","—","无水中电极数据","No aqueous electrode data","—","—","乙醇可被氧化为乙醛/乙酸，但非电极体系","Ethanol is oxidized to acetaldehyde/acetic acid, but not an electrode system")
+  ],
+  "CH3COOH":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","弱酸，醋酸根难氧化","Weak acid; acetate is hard to oxidize")
+  ],
+  "H2CO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碳酸，无电极反应","Carbonic acid, no electrode reaction")
+  ],
+  "Na2CO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钠盐，无电极反应","Sodium salt, no electrode reaction")
+  ],
+  "NaHCO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碳酸氢钠，无电极反应","Sodium bicarbonate, no electrode reaction")
+  ],
+  "K2CO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","钾盐，无电极反应","Potassium salt, no electrode reaction")
+  ],
+  "(NH4)2CO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","铵盐，N 为 −3 具弱还原性","Ammonium salt; N at −3 is weakly reducing")
+  ],
+  "(NH4)2SO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","铵盐，N 为 −3 具弱还原性","Ammonium salt; N at −3 is weakly reducing")
+  ],
+  "NH4HCO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碳酸氢铵，受热分解","Ammonium bicarbonate, decomposes on heating")
+  ],
+  "(NH4)3PO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸铵，无电极反应","Ammonium phosphate, no electrode reaction")
+  ],
+  "Na3PO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸盐，无电极反应","Phosphate, no electrode reaction")
+  ],
+  "K3PO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸盐，无电极反应","Phosphate, no electrode reaction")
+  ],
+  "Na2HPO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸氢盐，无电极反应","Hydrogen phosphate, no electrode reaction")
+  ],
+  "NaH2PO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸二氢盐，无电极反应","Dihydrogen phosphate, no electrode reaction")
+  ],
+  "Ca3(PO4)2":[
+    ep("固态","solid","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸钙，无电极反应","Calcium phosphate, no electrode reaction")
+  ],
+  "Mg3(PO4)2":[
+    ep("固态","solid","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸镁，无电极反应","Magnesium phosphate, no electrode reaction")
+  ],
+  "KAl(SO4)2":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","明矾，无电极反应","Alum, no electrode reaction")
+  ],
+  "H3PO4":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","磷酸，无电极反应","Phosphoric acid, no electrode reaction")
+  ],
+  "H3BO3":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","硼酸，无电极反应","Boric acid, no electrode reaction")
+  ],
+  "H2SiO3":[
+    ep("固态/水溶液","solid/aqueous","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","硅酸，无电极反应","Silicic acid, no electrode reaction")
+  ],
+  "HCN":[
+    ep("水溶液","aqueous solution","—","—","无常用电极数据（剧毒）","No common electrode data (highly toxic)","—","—","氢氰酸，CN⁻ 有配位/还原性","HCN; CN⁻ is a ligand/reductant")
+  ],
+  "HSCN":[
+    ep("水溶液","aqueous solution","—","—","无常用电极数据","No common electrode data","—","—","硫氰酸，无电极反应","Thiocyanic acid, no electrode reaction")
+  ],
+  "SiO2":[
+    ep("固态","solid","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","SiO₂ 中 Si 为 +4 最高价，无还原性","Si is +4 (highest) in SiO₂; no reducing power")
+  ],
+  "CaC2":[
+    ep("遇水","upon reaction with water","—","—","无常用电极数据（碳化物）","No common electrode data (carbide)","—","—","碳化钙遇水生成乙炔 C₂H₂","CaC₂ reacts with water to give acetylene C₂H₂")
+  ],
+  "As2O3":[
+    ep("酸性溶液","acidic solution","AsO₄³⁻ + 2H⁺ + 2e⁻ ⇌ AsO₂⁻ + H₂O","AsO₄³⁻ + 2H⁺ + 2e⁻ ⇌ AsO₂⁻ + H₂O","E° ≈ +0.56 V","E° ≈ +0.56 V","E = 0.56 + (0.0592/2)·lg([AsO₄³⁻][H⁺]²/[AsO₂⁻])","E = 0.56 + (0.0592/2)·log([AsO₄³⁻][H⁺]²/[AsO₂⁻])","砒霜，As(III) 具还原性","Arsenic trioxide; As(III) is reducing")
+  ],
+  "As2O5":[
+    ep("酸性溶液","acidic solution","AsO₄³⁻ + 2H⁺ + 2e⁻ ⇌ AsO₂⁻ + H₂O","AsO₄³⁻ + 2H⁺ + 2e⁻ ⇌ AsO₂⁻ + H₂O","E° ≈ +0.56 V","E° ≈ +0.56 V","E = 0.56 + (0.0592/2)·lg([AsO₄³⁻][H⁺]²/[AsO₂⁻])","E = 0.56 + (0.0592/2)·log([AsO₄³⁻][H⁺]²/[AsO₂⁻])","As(V) 具氧化性","As(V) is oxidizing")
+  ],
+  "Na2O":[
+    ep("固态（无溶液）","solid (no solution)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碱性氧化物，遇水生成 NaOH","Basic oxide; forms NaOH with water")
+  ],
+  "K2O":[
+    ep("固态（无溶液）","solid (no solution)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","碱性氧化物，遇水生成 KOH","Basic oxide; forms KOH with water")
+  ],
+  "Na2O2":[
+    ep("遇水/酸","with water/acid","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂（Na₂O₂ 水解产生 H₂O₂）","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂ (Na₂O₂ hydrolyzes to H₂O₂)","E° = +0.68 V","E° = +0.68 V","E = 0.68 + (0.0592/2)·lg(p(O₂)[H⁺]²/[H₂O₂])","E = 0.68 + (0.0592/2)·log(p(O₂)[H⁺]²/[H₂O₂])","过氧化钠，遇水/酸放出 H₂O₂ 或 O₂","Sodium peroxide releases H₂O₂/O₂ with water/acid")
+  ],
+  "BaO2":[
+    ep("遇水/酸","with water/acid","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂","E° = +0.68 V","E° = +0.68 V","E = 0.68 + (0.0592/2)·lg(p(O₂)[H⁺]²/[H₂O₂])","E = 0.68 + (0.0592/2)·log(p(O₂)[H⁺]²/[H₂O₂])","过氧化钡，与稀酸反应生成 H₂O₂","Barium peroxide yields H₂O₂ with dilute acid")
+  ],
+  "KO2":[
+    ep("遇水/酸","with water/acid","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂（超氧化物歧化放 O₂）","O₂ + 2H⁺ + 2e⁻ ⇌ H₂O₂ (superoxide dismutates releasing O₂)","E° = +0.68 V","E° = +0.68 V","—","—","超氧化钾，强氧化性，遇水放氧","Potassium superoxide, strongly oxidizing, releases O₂ with water")
+  ],
+  "P2O5":[
+    ep("固态（酸酐）","solid (acid anhydride)","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","五氧化二磷，强吸水，遇水成 H₃PO₄","P₂O₅ is a strong desiccant forming H₃PO₄")
+  ],
+  "N2O3":[
+    ep("气体（亚硝酐）","gas (nitrous anhydride)","—","—","无常用电极数据（遇水歧化）","No common electrode data (disproportionates in water)","—","—","遇水歧化为 HNO₂ 与 HNO₃","Disproportionates to HNO₂ and HNO₃ in water")
+  ],
+  "N2O5":[
+    ep("固态（硝酐）","solid (nitric anhydride)","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O（遇水成 HNO₃）","NO₃⁻ + 4H⁺ + 3e⁻ ⇌ NO + 2H₂O (forms HNO₃ with water)","E° = +0.96 V","E° = +0.96 V","—","—","强氧化性酸酐","Strongly oxidizing anhydride")
+  ],
+  "Cl2O":[
+    ep("气体（次氯酐）","gas (hypochlorous anhydride)","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","ClO⁻ + H₂O + 2e⁻ ⇌ Cl⁻ + 2OH⁻","E° = +0.89 V","E° = +0.89 V","—","—","遇水生成 HClO，强氧化","Forms HClO with water; strongly oxidizing")
+  ],
+  "Cl2O7":[
+    ep("固态（高氯酐）","solid (perchloric anhydride)","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","ClO₄⁻ + 8H⁺ + 8e⁻ ⇌ Cl⁻ + 4H₂O","E° = +1.39 V","E° = +1.39 V","—","—","遇水生成 HClO₄，强氧化，极不稳定","Forms HClO₄ with water; strongly oxidizing, very unstable")
+  ],
+  "FeS":[
+    ep("与金属铁","with Fe metal","Fe²⁺ + 2e⁻ ⇌ Fe（难溶 FeS 背景）","Fe²⁺ + 2e⁻ ⇌ Fe (with insoluble FeS)","E° = −0.44 V","E° = −0.44 V","E = −0.44 + (0.0592/2)·lg[Fe²⁺]","E = −0.44 + (0.0592/2)·log[Fe²⁺]","黑色难溶硫化物，可溶于强酸","Black insoluble sulfide, soluble in strong acid")
+  ],
+  "NaAlO2":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","偏铝酸盐，无电极反应","Aluminate, no electrode reaction")
+  ],
+  "Na2B4O7":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","硼砂，无电极反应","Borax, no electrode reaction")
+  ],
+  "CaSO4.2H2O":[
+    ep("固态/水溶液","solid/aqueous","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","石膏，无电极反应","Gypsum, no electrode reaction")
+  ],
+  "CuSO4.5H2O":[
+    ep("水溶液","aqueous solution","Cu²⁺ + 2e⁻ ⇌ Cu","Cu²⁺ + 2e⁻ ⇌ Cu","E° = +0.34 V","E° = +0.34 V","E = 0.34 + (0.0592/2)·lg[Cu²⁺]","E = 0.34 + (0.0592/2)·log[Cu²⁺]","胆矾水溶液同 Cu²⁺/Cu 电对","Blue vitriol solution: same Cu²⁺/Cu couple")
+  ],
+  "C12H22O11":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","蔗糖，无电极反应","Sucrose, no electrode reaction")
+  ],
+  "C6H6":[
+    ep("非水","non-aqueous","—","—","无水中电极数据","No aqueous electrode data","—","—","苯，非电极体系","Benzene, not an electrode system")
+  ],
+  "C2H6":[
+    ep("气体","gas","—","—","无水中电极数据","No aqueous electrode data","—","—","乙烷，作燃料","Ethane, used as fuel")
+  ],
+  "C2H4":[
+    ep("气体","gas","—","—","无水中电极数据","No aqueous electrode data","—","—","乙烯，可被氧化（还原性）","Ethene, can be oxidized (reducing)")
+  ],
+  "C2H2":[
+    ep("气体","gas","—","—","无水中电极数据","No aqueous electrode data","—","—","乙炔，还原性","Acetylene, reducing")
+  ],
+  "CH3OH":[
+    ep("非水（燃料电池）","non-aqueous (fuel cell)","CO₂ + 6H⁺ + 6e⁻ ⇌ CH₃OH + H₂O","CO₂ + 6H⁺ + 6e⁻ ⇌ CH₃OH + H₂O","E° ≈ +0.03 V","E° ≈ +0.03 V","—","—","甲醇直接燃料电池阳极燃料","Fuel for direct methanol fuel cells")
+  ],
+  "NH4OH":[
+    ep("水溶液","aqueous solution","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","氨水，无电极反应","Ammonia water, no electrode reaction")
+  ],
+  "Na2S2O3":[
+    ep("水溶液（与 I₂）","aqueous (with I₂)","S₄O₆²⁻ + 2e⁻ ⇌ 2S₂O₃²⁻","S₄O₆²⁻ + 2e⁻ ⇌ 2S₂O₃²⁻","E° = +0.08 V","E° = +0.08 V","E = 0.08 + (0.0592/2)·lg([S₄O₆²⁻]/[S₂O₃²⁻]²)","E = 0.08 + (0.0592/2)·log([S₄O₆²⁻]/[S₂O₃²⁻]²)","硫代硫酸钠，碘量法还原剂","Sodium thiosulfate, iodometric reductant")
+  ],
+  "H2S2O3":[
+    ep("水溶液（不稳定）","aqueous (unstable)","S₄O₆²⁻ + 2e⁻ ⇌ 2S₂O₃²⁻","S₄O₆²⁻ + 2e⁻ ⇌ 2S₂O₃²⁻","E° = +0.08 V","E° = +0.08 V","—","—","硫代硫酸极不稳定，立即分解","Thiosulfuric acid is very unstable, decomposes immediately")
+  ],
+  "AgOH":[
+    ep("（极不稳定）","(highly unstable)","Ag⁺ + e⁻ ⇌ Ag（AgOH 生成即分解为 Ag₂O）","Ag⁺ + e⁻ ⇌ Ag (AgOH decomposes to Ag₂O immediately)","E° = +0.80 V","E° = +0.80 V","E = 0.80 + 0.0592·lg[Ag⁺]","E = 0.80 + 0.0592·log[Ag⁺]","AgOH 不存在稳定形式","AgOH has no stable form")
+  ],
+  "AuOH":[
+    ep("（极不稳定）","(highly unstable)","Au⁺ + e⁻ ⇌ Au","Au⁺ + e⁻ ⇌ Au","E° = +1.69 V","E° = +1.69 V","E = 1.69 + 0.0592·lg[Au⁺]","E = 1.69 + 0.0592·log[Au⁺]","Au(I) 极不稳定，歧化","Au(I) is very unstable, disproportionates")
+  ],
+  "Hg2(OH)2":[
+    ep("（不稳定）","(unstable)","Hg₂²⁺ + 2e⁻ ⇌ 2Hg","Hg₂²⁺ + 2e⁻ ⇌ 2Hg","E° = +0.79 V","E° = +0.79 V","E = 0.79 + (0.0592/2)·lg[Hg₂²⁺]","E = 0.79 + (0.0592/2)·log[Hg₂²⁺]","亚汞氢氧化物不稳定，脱水为 Hg₂O","Mercurous hydroxide is unstable, dehydrating to Hg₂O")
+  ],
+  "Pb(OH)2":[
+    ep("碱性溶液","alkaline solution","Pb(OH)₂ + 2e⁻ ⇌ Pb + 2OH⁻","Pb(OH)₂ + 2e⁻ ⇌ Pb + 2OH⁻","E° = −0.58 V","E° = −0.58 V","E = −0.58 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.58 + (0.0592/2)·log(1/[OH⁻]²)","两性氢氧化物","Amphoteric hydroxide")
+  ],
+  "Sn(OH)2":[
+    ep("碱性溶液","alkaline solution","Sn(OH)₃⁻ + 2e⁻ ⇌ Sn + 3OH⁻（锡酸盐体系）","Sn(OH)₃⁻ + 2e⁻ ⇌ Sn + 3OH⁻ (stannite system)","E° ≈ −0.91 V","E° ≈ −0.91 V","—","—","两性氢氧化物","Amphoteric hydroxide")
+  ],
+  "Bi(OH)3":[
+    ep("碱性溶液","alkaline solution","—","—","无常用电极数据","No common electrode data","—","—","难溶氢氧化物","Insoluble hydroxide")
+  ],
+  "Mn(OH)2":[
+    ep("碱性溶液","alkaline solution","Mn(OH)₂ + 2e⁻ ⇌ Mn + 2OH⁻","Mn(OH)₂ + 2e⁻ ⇌ Mn + 2OH⁻","E° = −1.55 V","E° = −1.55 V","E = −1.55 + (0.0592/2)·lg(1/[OH⁻]²)","E = −1.55 + (0.0592/2)·log(1/[OH⁻]²)","白色沉淀，强还原性","White precipitate, strongly reducing")
+  ],
+  "Co(OH)2":[
+    ep("碱性溶液","alkaline solution","Co(OH)₂ + 2e⁻ ⇌ Co + 2OH⁻","Co(OH)₂ + 2e⁻ ⇌ Co + 2OH⁻","E° = −0.73 V","E° = −0.73 V","E = −0.73 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.73 + (0.0592/2)·log(1/[OH⁻]²)","粉红色沉淀","Pink precipitate")
+  ],
+  "Ni(OH)2":[
+    ep("碱性溶液","alkaline solution","Ni(OH)₂ + 2e⁻ ⇌ Ni + 2OH⁻","Ni(OH)₂ + 2e⁻ ⇌ Ni + 2OH⁻","E° = −0.72 V","E° = −0.72 V","E = −0.72 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.72 + (0.0592/2)·log(1/[OH⁻]²)","绿色沉淀","Green precipitate")
+  ],
+  "Cr(OH)3":[
+    ep("碱性溶液","alkaline solution","Cr(OH)₃ + 3e⁻ ⇌ Cr + 3OH⁻","Cr(OH)₃ + 3e⁻ ⇌ Cr + 3OH⁻","E° = −1.48 V","E° = −1.48 V","E = −1.48 + (0.0592/3)·lg(1/[OH⁻]³)","E = −1.48 + (0.0592/3)·log(1/[OH⁻]³)","两性氢氧化物","Amphoteric hydroxide")
+  ],
+  "Fe(OH)2":[
+    ep("碱性溶液","alkaline solution","Fe(OH)₂ + 2e⁻ ⇌ Fe + 2OH⁻","Fe(OH)₂ + 2e⁻ ⇌ Fe + 2OH⁻","E° = −0.89 V","E° = −0.89 V","E = −0.89 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.89 + (0.0592/2)·log(1/[OH⁻]²)","白色沉淀，强还原性","White precipitate, strongly reducing")
+  ],
+  "Fe(OH)3":[
+    ep("碱性溶液","alkaline solution","Fe(OH)₃ + e⁻ ⇌ Fe(OH)₂ + OH⁻","Fe(OH)₃ + e⁻ ⇌ Fe(OH)₂ + OH⁻","E° = −0.56 V","E° = −0.56 V","E = −0.56 + 0.0592·lg(1/[OH⁻])","E = −0.56 + 0.0592·log(1/[OH⁻])","红褐色沉淀","Reddish-brown precipitate")
+  ],
+  "Cu(OH)2":[
+    ep("碱性溶液","alkaline solution","Cu(OH)₂ + 2e⁻ ⇌ Cu + 2OH⁻","Cu(OH)₂ + 2e⁻ ⇌ Cu + 2OH⁻","E° = −0.22 V","E° = −0.22 V","E = −0.22 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.22 + (0.0592/2)·log(1/[OH⁻]²)","蓝色沉淀","Blue precipitate")
+  ],
+  "Zn(OH)2":[
+    ep("碱性溶液","alkaline solution","[Zn(OH)₄]²⁻ + 2e⁻ ⇌ Zn + 4OH⁻","[Zn(OH)₄]²⁻ + 2e⁻ ⇌ Zn + 4OH⁻","E° = −1.26 V","E° = −1.26 V","E = −1.26 + (0.0592/2)·lg([Zn(OH)₄²⁻]/[OH⁻]⁴)","E = −1.26 + (0.0592/2)·log([Zn(OH)₄²⁻]/[OH⁻]⁴)","白色两性氢氧化物","White amphoteric hydroxide")
+  ],
+  "Al(OH)3":[
+    ep("碱性溶液","alkaline solution","Al(OH)₃ + 3e⁻ ⇌ Al + 3OH⁻","Al(OH)₃ + 3e⁻ ⇌ Al + 3OH⁻","E° = −2.31 V","E° = −2.31 V","E = −2.31 + (0.0592/3)·lg(1/[OH⁻]³)","E = −2.31 + (0.0592/3)·log(1/[OH⁻]³)","两性氢氧化物","Amphoteric hydroxide")
+  ],
+  "Mg(OH)2":[
+    ep("碱性溶液","alkaline solution","Mg(OH)₂ + 2e⁻ ⇌ Mg + 2OH⁻","Mg(OH)₂ + 2e⁻ ⇌ Mg + 2OH⁻","E° = −2.69 V","E° = −2.69 V","E = −2.69 + (0.0592/2)·lg(1/[OH⁻]²)","E = −2.69 + (0.0592/2)·log(1/[OH⁻]²)","难溶碱","Insoluble base")
+  ],
+  "Ca(OH)2":[
+    ep("碱性溶液","aqueous","—","—","无（非氧化还原体系）","None (non-redox system)","—","—","仅作碱","Only a base")
+  ],
+  "NaOH":[
+    ep("水溶液","aqueous solution","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","E° = −0.83 V","E° = −0.83 V","E = −0.83 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.83 + (0.0592/2)·log(1/[OH⁻]²)","NaOH 本身无电对；水溶液阴极析氢","NaOH itself has no couple; cathode evolves H₂")
+  ],
+  "KOH":[
+    ep("水溶液","aqueous solution","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","2H₂O + 2e⁻ ⇌ H₂ + 2OH⁻","E° = −0.83 V","E° = −0.83 V","E = −0.83 + (0.0592/2)·lg(1/[OH⁻]²)","E = −0.83 + (0.0592/2)·log(1/[OH⁻]²)","KOH 本身无电对；水溶液阴极析氢","KOH itself has no couple; cathode evolves H₂")
+  ],
+  "N2":[
+    ep("酸性溶液（还原为铵盐）","acidic solution (reduction to ammonium)","N₂ + 8H⁺ + 6e⁻ ⇌ 2NH₄⁺","N₂ + 8H⁺ + 6e⁻ ⇌ 2NH₄⁺","E° = +0.27 V","E° = +0.27 V","E = 0.27 + (0.0592/6)·lg(p(N₂)[H⁺]⁸/[NH₄⁺]²)","E = 0.27 + (0.0592/6)·log(p(N₂)[H⁺]⁸/[NH₄⁺]²)","需催化剂（固氮酶/工业 Haber 工艺），动力学惰性","Requires catalyst (nitrogenase / Haber process); kinetically inert"),
+    ep("碱性溶液","alkaline solution","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻","N₂ + 6H₂O + 6e⁻ ⇌ 2NH₃ + 6OH⁻","E° = −0.73 V","E° = −0.73 V","E = −0.73 + (0.0592/6)·lg(p(N₂)/[NH₃]²[OH⁻]⁶)","E = −0.73 + (0.0592/6)·log(p(N₂)/[NH₃]²[OH⁻]⁶)","N≡N 三键极强，需高温高压或生物固氮","Very strong N≡N triple bond; needs high T/p or biological fixation"),
+    ep("常态","normal conditions","—","—","无（N₂ 自身惰性，不构成常规电极体系）","None (N₂ is inert; no conventional electrode couple)","—","—","常温下化学性质稳定","Chemically stable at room temperature")
+  ],
+  "CuCl":[
+    ep("酸性溶液","acidic solution","Cu²⁺ + Cl⁻ + e⁻ ⇌ CuCl","Cu²⁺ + Cl⁻ + e⁻ ⇌ CuCl","E° = +0.54 V","E° = +0.54 V","E = 0.54 + 0.0592·lg([Cu²⁺][Cl⁻])","E = 0.54 + 0.0592·log([Cu²⁺][Cl⁻])","CuCl 不溶于水；Cu(I) 在溶液中易歧化","CuCl is insoluble in water; Cu(I) disproportionates readily in solution")
+  ],
+  "Cu2S":[
+    ep("酸性溶液","acidic solution","Cu₂S + 2H⁺ + 2e⁻ ⇌ 2Cu + H₂S","Cu₂S + 2H⁺ + 2e⁻ ⇌ 2Cu + H₂S","E° ≈ +0.60 V（估算）","E° ≈ +0.60 V (estimated)","—","—","难溶硫化物","Insoluble sulfide")
+  ],
+  "HgCl2":[
+    ep("水溶液","aqueous solution","Hg²⁺ + 2e⁻ ⇌ Hg","Hg²⁺ + 2e⁻ ⇌ Hg","E° = +0.85 V","E° = +0.85 V","E = 0.85 + (0.0592/2)·lg[Hg²⁺]","E = 0.85 + (0.0592/2)·log[Hg²⁺]","Hg(II) 有中等氧化性","Hg(II) has moderate oxidizing power")
+  ],
+  "Hg2Cl2":[
+    ep("甘汞电极","calomel electrode","Hg₂Cl₂ + 2e⁻ ⇌ 2Hg + 2Cl⁻","Hg₂Cl₂ + 2e⁻ ⇌ 2Hg + 2Cl⁻","E° = +0.27 V（饱和甘汞电极约 +0.24 V）","E° = +0.27 V (SCE ≈ +0.24 V)","E = 0.27 + (0.0592/2)·lg(1/[Cl⁻]²)","E = 0.27 + (0.0592/2)·log(1/[Cl⁻]²)","经典参比电极","Classic reference electrode")
+  ],
+  "Pb(Ac)2":[
+    ep("水溶液","aqueous solution","Pb²⁺ + 2e⁻ ⇌ Pb","Pb²⁺ + 2e⁻ ⇌ Pb","E° = −0.13 V","E° = −0.13 V","E = −0.13 + (0.0592/2)·lg[Pb²⁺]","E = −0.13 + (0.0592/2)·log[Pb²⁺]","醋酸铅（铅糖），可溶性铅盐","Lead acetate, soluble lead salt")
+  ],
+  "P":[
+    ep("固态（作还原剂）","solid (as reducing agent)","—","—","无常用电极数据","No common electrode data","—","—","白磷/红磷均强还原性","White/red phosphorus are strong reductants")
+  ],
+  "P4":[
+    ep("固态（作还原剂）","solid (as reducing agent)","—","—","无常用电极数据","No common electrode data","—","—","白磷易自燃","White phosphorus ignites spontaneously")
+  ],
+  "C":[
+    ep("固态（惰性电极/还原剂）","solid (inert electrode/reductant)","—","—","无（碳自身电对在常规体系中少见）","None (carbon couples uncommon in conventional systems)","—","—","石墨作惰性电极","Graphite is an inert electrode")
+  ]
+};
+
 export const COLORS = {
   "Cu":[
     {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"紫红色",        "en":"purplish red"},      "hex":"#b87333",      "ion":null}
@@ -2880,6 +3597,7 @@ export function analyze(raw){
     colors: (known && known.colors) || COLORS[normKey] || COLORS[parsed.raw] || null,
     redox,
     solubility,
+    electrode: ELECTRODE[normKey] || ELECTRODE[parsed.raw] || null,
     radical: detectRadical(parsed),
     ruleNote: rule.note
   };

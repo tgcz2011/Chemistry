@@ -2,7 +2,7 @@
 
 一个**网页版化学小工具**，能力一览：
 
-1. **物质存在性判定**：输入任意化学式，毫秒级判断"稳定存在 / 仅特定条件下存在 / 可生成但极不稳定 / 通常不存在"，给出注意事项、**颜色与形态**（含显色离子来源，如 CuCl₂ 溶液蓝色因 Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺）、**氧化/还原性**（分类讨论，如在水中 vs 酸性条件下）、**溶解度**（按溶剂分类）、危险信息、摩尔质量，并附 PubChem/维基百科来源链接。所有字段结构化固定输出，缺失填"无"。
+1. **物质存在性判定**：输入任意化学式，毫秒级判断"稳定存在 / 仅特定条件下存在 / 可生成但极不稳定 / 通常不存在"，给出注意事项、**颜色与形态**（含显色离子来源，如 CuCl₂ 溶液蓝色因 Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺）、**氧化/还原性**（分类讨论，如在水中 vs 酸性条件下）、**溶解度**（按溶剂分类）、**电极电势**（分情形给出半电池反应、标准电势 E° 与随离子浓度变化的能斯特方程）、危险信息、摩尔质量，并附 PubChem/维基百科来源链接。所有字段结构化固定输出，缺失填"无"。
 2. **化学方程式配平**：输入完整方程式（如 `KMnO4+HCl=KCl+MnCl2+H2O+Cl2`）用**代数法**自动配平（保证原子守恒，可处理氧化还原）。
 3. **反应补全 + 化学计量**：仅给反应物（如 `HCl+NaOH`，条件可留空）→ 本地规则或 **Workers AI** 补全产物并配平，返回完整方程式与各物质摩尔质量，并可“给某物质的量 → 算其余”。
 4. **状态符号与可逆**：产物自动标注沉淀 `↓`、气体 `↑`；可逆反应（如 `N₂+3H₂⇌2NH₃`、`CO₂+H₂O⇌H₂CO₃`）用 `⇌` 表示。
@@ -17,16 +17,16 @@
 - 判定采用**多级 fallback 链**（本地 → 缓存 → 联网权威源 → AI）：
 
   ```
-  本地知识库(110+精选, 毫秒) 
+  本地知识库(198精选, 毫秒) 
     → 价键/氧化态规则(即时) 
-    → D1 缓存(14天, stale-while-revalidate) 
+    → D1 缓存(永不过期，上报刷新时覆盖) 
     → PubChem(美国国家化学数据库, 1.1亿+化合物, 权威证实存在性+CID+中文名) 
     → Wikipedia(中/英, WikiData 兜底) 
     → Workers AI(Qwen3-30B, 拿着 PubChem/Wiki 事实+本地价态提示做总结) 
     → 回写 D1 缓存
   ```
 
-- **D1 缓存**：联网判定结果缓存 14 天；过期先返回旧值、后台刷新（stale-while-revalidate），兼顾速度与新鲜度。
+- **D1 缓存**：联网判定结果缓存**永不过期**（避免重复付费联网），仅当用户通过上报机制标记有误时才强制重查覆盖。
 - **上报机制**：`GET /api/report?formula=X` 让用户标记有误结果，**限流**（设备指纹 IP+UA 哈希；每设备每日 ≤20 次、单式每日 ≤3 次）后强制联网重查并更新缓存。
 - **数据可信处理**：中文名可信过滤（剔除维基“XX列表/索引”等误命中）、离子感知、AI 提示词携带 PubChem/Wiki 事实与“PubChem 未命中≠不存在”约束。
 - 界面为「化学检验报告单 / 安全数据表」编辑印刷风（判定章戳、SDS 编号分区、发丝线 + 颗粒噪点）。
@@ -128,7 +128,15 @@ wrangler secret put API_KEYS
 # 交互输入：my-key-abc123,another-key-456
 ```
 
-外部调用时在 URL 加 `?key=<你的key>` 即可。
+外部调用时在请求头携带 API key（推荐）：
+
+```bash
+curl -H "Authorization: Bearer <你的key>" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4"
+# 或用 X-Api-Key 头：
+curl -H "X-Api-Key: <你的key>" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4"
+```
+
+> 出于安全考虑 key **不**放在 URL 查询串中（避免被代理/日志/浏览器历史泄露）。`?key=` 查询串仅作旧版本兼容兜底，新代码请一律用请求头。跨域调用须先发 `OPTIONS` 预检，Worker 已返回 204 并允许 `Authorization`/`X-Api-Key` 头。
 
 ### 接口列表
 
@@ -174,6 +182,9 @@ wrangler secret put API_KEYS
     { "solvent": "水", "value": "易溶", "note": "20°C 约 23g/100mL" },
     { "solvent": "乙醇", "value": "微溶", "note": "难溶于无水乙醇" }
   ],
+  "electrode": [
+    { "condition": "水溶液（标准态）", "reaction": "Cu²⁺ + 2e⁻ ⇌ Cu", "e0": "E° = +0.34 V", "nernst": "E = 0.34 + (0.0592/2)·lg[Cu²⁺]", "detail": "Cu²⁺ 浓度越大，电极电势越高" }
+  ],
   "warnings": ["⚠ 剧毒：避免接触与误食..."],
   "notes": ["无水硫酸铜为白色粉末，吸水后变蓝..."],
   "sources": [{ "label": "PubChem CID 24462", "url": "https://pubchem.ncbi.nlm.nih.gov/compound/24462" }],
@@ -193,6 +204,7 @@ wrangler secret put API_KEYS
 | `redox` | array | 氧化/还原性，**按条件分类**：`condition`(条件) + `behavior`(氧化性/还原性/歧化/无) + `detail`(具体描述)；无资料 `[]` |
 | `colors` | array | 颜色与形态，按形态分类：`form`(固体/水溶液/气体) + `color` + `hex`(色值) + `ion`(显色离子来源，如 `Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺`；物质整体显色则 `null`)；无资料 `[]` |
 | `solubility` | array | 溶解度，**按溶剂分类**：`solvent`(水/乙醇/...) + `value`(易溶/可溶/微溶/难溶/不溶) + `note`(具体数值)；无资料 `[]` |
+| `electrode` | array/nil | 电极电势，**按情形分类**：`condition`(酸性/碱性/中性/非水/固态) + `reaction`(半电池反应) + `e0`(标准电势 E°) + `nernst`(能斯特方程 E°+(0.0592/n)·lg...) + `detail`(说明)；该物质不构成电极体系则 `null`，前端显示"无" |
 | `composition` | array | 元素质量分数：`symbol` + `name` + `count` + `massPct` |
 | `source` | string | `pubchem` / `workers-ai` / `knowledge-base` / `rule` / `rule-fallback` |
 | `fromCache` / `stale` | boolean | 是否来自 D1 缓存 / 是否过期(后台刷新中) |
@@ -206,17 +218,17 @@ wrangler secret put API_KEYS
 
 ```bash
 # 物质判定（含深度联网）
-curl "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&deep=1&key=my-key-abc123"
+curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&deep=1"
 
 # 方程式配平
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2&key=my-key-abc123"
+curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2"
 
 # 仅给反应物，AI 补全产物
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH&key=my-key-abc123"
+curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH"
 # → { "equation":"HCl + NaOH → NaCl + H₂O", "mode":"completion", "type":"酸碱中和" }
 
 # 双水解反应（本地规则自动识别）
-curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3&key=my-key-abc123"
+curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
 # → { "equation":"2AlCl₃ + 3Na₂CO₃ + 3H₂O → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl", "type":"双水解" }
 ```
 
@@ -224,7 +236,7 @@ curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3&key=
 
 ```json
 // 401（缺少 key）
-{ "ok": false, "error": "外部 API 调用需要 API key。请在 URL 加 ?key=<你的key>。生成方式见 README「API 调用教程」。" }
+{ "ok": false, "error": "外部 API 调用需要 API key。请在请求头 Authorization: Bearer <你的key> 中携带（或 X-Api-Key 头）。生成方式见 README「API 调用教程」。" }
 
 // 403（key 无效）
 { "ok": false, "error": "API key 无效。" }
@@ -256,7 +268,7 @@ wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
 ```
 
 三张表：
-- `formula_cache` — 联网判定结果 + 方程式 AI 补全缓存（14 天 TTL）
+- `formula_cache` — 联网判定结果 + 方程式 AI 补全缓存（永不过期，上报刷新时覆盖）
 - `report_usage` — 上报限流计数（每设备每日 ≤20、单式 ≤3）
 - `api_usage` — 外部 API 调用限流计数（每 IP 每日 ≤50，同源网页查询不计）
 
@@ -267,11 +279,12 @@ wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
 位于 `public/chem-engine.js`，浏览器与 Worker 共用：
 
 1. **解析器**：支持大写元素符号、嵌套括号 `()`、方括号配合物 `[]`、水合点 `·`、末尾电荷 `+`/`-`（如 `SO4^2-`、`Fe3+`）。
-2. **知识库**（`KNOWNS`）：约 110 种物质的权威判定与中文注意事项，命中即高置信返回。
+2. **知识库**（`KNOWNS`）：198 种物质的权威判定与中文注意事项，命中即高置信返回。
 3. **规则回退**（`ruleCheck`）：对未收录式，依据周期表氧化态与**电中性**规则推断：
    - 电荷可平衡且氧化态合理 → “可能存在”(medium)；
-   - 含变价元素无法唯一判定（如 Fe₃O₄ 混合价）→ 保守判“可能存在”；
-   - 电荷无法平衡（如 `NaCl₂`）→ “通常不存在”。
+   - 含变价元素无法唯一判定（如 Fe₃O₄ 混合价）→ 自动尝试两种常见氧化态按整数原子数组合，或保守判“可能存在”；
+   - 氢化物特判（金属氢化物/硼烷/硅烷中 H 取 −1），电荷无法平衡（如 `NaCl₂`）→ “通常不存在”。
+4. **电极电势表**（`ELECTRODE`）：约 210 种物质的双语电极电势数据（半电池反应、E°、能斯特方程、条件说明），覆盖全部 KNOWNS 与常见单质/盐；查询命中即随判定结果一并返回，未收录则返回 `null`（前端显示"无"）。
 
 因此可即时处理任意输入的合法化学式，而不仅限常见式。规则推断为辅助判断，权威结论以实验与文献为准。
 
@@ -285,12 +298,12 @@ chem-check/
 │   ├── index.html        # 网页界面（检验报告单/SDS 风）
 │   ├── styles.css        # 样式
 │   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报）
-│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 酸根检测（浏览器/Worker 共用）
+│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 电极电势表 + 酸根检测（浏览器/Worker 共用）
 │   └── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
 ├── src/
 │   ├── worker.js         # Worker：路由 + fallback 链 + AI 提示词 + API 网关(限流/key) + 结构化返回
 │   ├── chem-sources.js   # PubChem / Wikipedia 数据源客户端
-│   ├── chem-cache.js     # D1 缓存(stale-while-revalidate) + 上报限流 + API 限流
+│   ├── chem-cache.js     # D1 缓存(永不过期) + 上报限流 + API 限流
 │   └── chem-reactions.js # 本地无机反应补全引擎（中和/复分解/置换/双水解/剂量变体）
 ├── migrations/
 │   ├── 0001_init.sql     # D1 schema：formula_cache + report_usage

@@ -23,7 +23,7 @@ const I18N = {
     footer:"本地即时判定 · Workers AI 深度判定 · 代数配平与计量 · 教育用途，危险物质操作请遵循实验室规范",
     stamp:{ yes:"稳定存在", conditional:"特定条件", unstable:"极不稳定", no:"不存在", waiting:"待核实" },
     sec_composition:"元素质量分数", sec_radical:"结构特征",
-    sec_hazards:"危险信息", sec_colors:"颜色与形态", sec_redox:"氧化/还原性", sec_solubility:"溶解度", sec_warnings:"安全提示",
+    sec_hazards:"危险信息", sec_colors:"颜色与形态", sec_redox:"氧化/还原性", sec_solubility:"溶解度", sec_electrode:"电极电势", sec_warnings:"安全提示",
     sec_notes:"说明与注意事项", sec_sources:"数据来源", sec_related:"相关物质",
     lbl_ion:"显色来源", lbl_none:"无",
     meta_composition:"组成", meta_mass:"摩尔质量", meta_charge:"总电荷", meta_source:"判定来源",
@@ -51,7 +51,7 @@ const I18N = {
     footer:"Instant local · Workers AI deep · Algebraic balancing · For education — follow lab safety for hazardous substances",
     stamp:{ yes:"Exists", conditional:"Conditional", unstable:"Unstable", no:"Not found", waiting:"WAITING" },
     sec_composition:"Element Mass Fraction", sec_radical:"Structural Feature",
-    sec_hazards:"Hazards", sec_colors:"Color & Form", sec_redox:"Redox Properties", sec_solubility:"Solubility", sec_warnings:"Safety",
+    sec_hazards:"Hazards", sec_colors:"Color & Form", sec_redox:"Redox Properties", sec_solubility:"Solubility", sec_electrode:"Electrode Potential", sec_warnings:"Safety",
     sec_notes:"Notes & Precautions", sec_sources:"Sources", sec_related:"Related",
     lbl_ion:"Color source", lbl_none:"None",
     meta_composition:"Composition", meta_mass:"Molar mass", meta_charge:"Total charge", meta_source:"Source",
@@ -303,6 +303,14 @@ function renderReport(res, raw, opts={}){
     `<div class="sec"><h4>${t("sec_solubility")}</h4>`+
     res.solubility.map(s=>`<div class="sol-item"><span class="sol-solv">${escapeHtml(bi(s.solvent))}</span><span class="sol-val">${escapeHtml(bi(s.value))}</span>${s.note?`<span class="sol-note">${escapeHtml(bi(s.note))}</span>`:""}</div>`).join("")+
     `</div>`:"";
+  const electrodeHtml=(!opts.waiting)?
+    `<div class="sec"><h4>${t("sec_electrode")}</h4>`+
+    ((res.electrode&&res.electrode.length)?
+      `<table class="electrode-table"><thead><tr><th>${isEn?"Condition":"条件"}</th><th>${isEn?"Half-cell reaction":"电对反应"}</th><th>${isEn?"E°":"E°"}</th><th>${isEn?"Nernst equation":"能斯特方程"}</th><th>${isEn?"Note":"说明"}</th></tr></thead><tbody>`+
+      res.electrode.map(e=>`<tr><td class="el-cond">${escapeHtml(bi(e.condition))}</td><td class="el-rxn">${escapeHtml(bi(e.reaction))}</td><td class="el-e0">${escapeHtml(bi(e.e0))}</td><td class="el-nernst">${escapeHtml(bi(e.nernst))}</td><td class="el-detail">${escapeHtml(bi(e.detail))}</td></tr>`).join("")+
+      `</tbody></table>`
+    :`<span class="sec-empty">${isEn?"No electrode potential data available":"无电极电势数据"}</span>`)+
+    `</div>`:"";
   const deepHtml = opts.deep ? `<div class="sec"><div class="loading">${t("loading_deep")}</div></div>` : "";
   const reportHtml = (!opts.waiting && res.source && res.source!=="knowledge-base") ?
     `<div class="sec"><button class="chip" id="report-btn">${t("report_btn")}</button><span class="rep-hint" id="report-hint"></span></div>` : "";
@@ -332,6 +340,7 @@ function renderReport(res, raw, opts={}){
       ${isNo?"":colorsHtml}
       ${isNo?"":redoxHtml}
       ${isNo?"":solubilityHtml}
+      ${isNo?"":electrodeHtml}
       ${isNo?"":warnsHtml}
       ${isNo?"":notesHtml}
       ${isNo?"":sourcesHtml}
