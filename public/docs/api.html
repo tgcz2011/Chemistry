@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-lang="cn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>API 调用文档 · Chemical Assay API</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<div class="toprule" aria-hidden="true"></div>
+
+<main class="wrap">
+  <header class="masthead">
+    <div class="mast-left">
+      <span class="doc-no">CR·01</span>
+      <a class="brand" href="/" style="text-decoration:none;color:inherit" data-i18n="brand">化学式速查</a>
+      <span class="brand-en">CHEMICAL ASSAY API</span>
+    </div>
+    <div class="mast-right">
+      <button class="toggle-btn" id="lang-toggle" title="切换语言 / Switch language">
+        <span class="seg"><span class="on">中</span><span>EN</span></span>
+      </button>
+      <button class="toggle-btn" id="theme-toggle" title="切换主题 / Switch theme">
+        <span class="seg"><span class="on">☀</span><span>☾</span></span>
+      </button>
+      <a class="mast-link" href="/" rel="noopener" data-i18n="doc_back">返回首页 →</a>
+    </div>
+  </header>
+  <hr class="rule" />
+
+  <section class="doc-head">
+    <p class="doc-eyebrow" data-i18n="doc_eyebrow">API REFERENCE · 接口参考</p>
+    <h1 data-i18n="doc_title">API 调用文档</h1>
+    <p class="doc-lede" data-i18n="doc_lede">物质存在性判定、方程式配平与化学计量的一体化接口。网页同源查询免费无限；外部调用需携带 API key，同一 IP 每日 50 次。</p>
+  </section>
+
+  <section class="doc-body">
+    <div class="doc-sec">
+      <h2 data-i18n="doc_sec_access">访问方式与限流</h2>
+      <table class="doc-tbl">
+        <thead><tr>
+          <th data-i18n="doc_th_method">调用方式</th>
+          <th data-i18n="doc_th_key">API key</th>
+          <th data-i18n="doc_th_rate">限流</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><b data-i18n="doc_access_web">网页查询</b><br/><span data-i18n="doc_access_web_sub">同源 Origin / Referer 匹配站点域名，如本页面查询</span></td>
+            <td><span class="doc-tag no" data-i18n="doc_no">否</span></td>
+            <td data-i18n="doc_access_web_rate">不限，免费无限</td>
+          </tr>
+          <tr>
+            <td><b data-i18n="doc_access_ext">外部 API 调用</b><br/><span data-i18n="doc_access_ext_sub">跨域，如 curl / 其他网站 / 后端服务</span></td>
+            <td><span class="doc-tag key" data-i18n="doc_yes">是</span></td>
+            <td><b data-i18n="doc_access_ext_rate">同一 IP 每日 50 次</b></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="doc-hint" data-i18n="doc_access_hint">网页查询不计入限流。只有从外部（curl、脚本、其他网站后端）调用 API 才需要 key 并受 50 次/天/IP 限制。</div>
+    </div>
+
+    <div class="doc-sec">
+      <h2 data-i18n="doc_sec_key">获取 API key</h2>
+      <p data-i18n="doc_key_p1">外部调用无需申请 key——额度按调用来源 IP 自动计算（同一 IP 每日 50 次），随取随用：</p>
+      <pre class="code">curl "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4"
+<span class="c"># 查看当前 IP 剩余额度：</span>
+curl "https://chem-check.zztool.dpdns.org/api/usage"
+<span class="c"># 或在网页查看：/usage</span></pre>
+      <div class="doc-hint warn" data-i18n="doc_key_hint">旧版 <code class="ep">API_KEYS</code> 静态 key 机制已废止，<code class="ep">Authorization: Bearer</code> / <code class="ep">X-Api-Key</code> 请求头不再校验。站长可在 <code class="ep">/console</code>（需 <code class="ep">CONSOLE_PASSWORD</code>）查看调用统计与限流配置。</div>
+    </div>
+
+    <div class="doc-sec">
+      <h2 data-i18n="doc_sec_endpoints">接口列表</h2>
+      <table class="doc-tbl">
+        <thead><tr>
+          <th data-i18n="doc_th_endpoint">接口</th>
+          <th data-i18n="doc_th_desc">说明</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="nowrap"><code>GET /api/check?formula=X[&amp;deep=1]</code></td><td data-i18n="doc_ep_check">物质存在性判定（<code class="ep">deep=1</code> 触发联网兜底链）</td></tr>
+          <tr><td class="nowrap"><code>GET /api/report?formula=X[&amp;did=Y]</code></td><td data-i18n="doc_ep_report">上报信息有误，强制联网重查并更新缓存</td></tr>
+          <tr><td class="nowrap"><code>GET /api/equation?input=..&amp;condition=..</code></td><td data-i18n="doc_ep_equation">方程式配平 / 补全 / 化学计量</td></tr>
+          <tr><td class="nowrap"><code>GET /api/health</code></td><td data-i18n="doc_ep_health">健康检查（无需 key）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="doc-sec">
+      <h2 data-i18n="doc_sec_response">统一响应结构</h2>
+      <p data-i18n="doc_resp_p">所有 <code class="ep">/api/check</code> 和 <code class="ep">/api/report</code> 的返回都经过<b>结构化归一化</b>——所有字段必现，无资料填 <code class="ep">[]</code>（数组）或 <code class="ep">null</code>（标量），不会出现字段缺失的情况。</p>
+      <pre class="code">{
+  "ok": true, "input": "CuSO4", "normalized": "CuSO4",
+  "name": "硫酸铜", "verdict": "yes", "confidence": "high", "source": "pubchem",
+  "elements": { "Cu": 1, "S": 1, "O": 4 }, "charge": 0, "mass": 159.609,
+  "composition": [
+    { "symbol": "Cu", "name": "铜", "count": 1, "massPct": 39.81 },
+    { "symbol": "S",  "name": "硫", "count": 1, "massPct": 20.09 },
+    { "symbol": "O",  "name": "氧", "count": 4, "massPct": 40.10 }
+  ],
+  "radical": null,
+  "hazards": ["toxic"],
+  "redox": [
+    { "condition": "在水中", "behavior": "无显著氧化还原性", "detail": "Cu²⁺ 较稳定" },
+    { "condition": "活泼金属置换", "behavior": "氧化性", "detail": "Cu²⁺ 可被 Zn/Fe 置换为 Cu" }
+  ],
+  "colors": [
+    { "form": "无水固体", "color": "白色", "hex": "#f4f4f0", "ion": null },
+    { "form": "水溶液", "color": "蓝色", "hex": "#2e6fd6", "ion": "Cu²⁺ 水合为 [Cu(H₂O)₄]²⁺" }
+  ],
+  "solubility": [
+    { "solvent": "水", "value": "易溶", "note": "20°C 约 23g/100mL" },
+    { "solvent": "乙醇", "value": "微溶", "note": "难溶于无水乙醇" }
+  ],
+  "electrode": [
+    { "condition": "水溶液（标准态）", "reaction": "Cu²⁺ + 2e⁻ ⇌ Cu",
+      "e0": "E° = +0.34 V", "nernst": "E = 0.34 + (0.0592/2)·lg[Cu²⁺]",
+      "detail": "Cu²⁺ 浓度越大，电极电势越高" }
+  ],
+  "warnings": ["⚠ 剧毒：避免接触与误食..."],
+  "notes": ["无水硫酸铜为白色粉末，吸水后变蓝..."],
+  "sources": [{ "label": "PubChem CID 24462", "url": "https://pubchem.ncbi.nlm.nih.gov/compound/24462" }],
+  "related": ["CuSO4·5H2O", "Cu(OH)2", "BaCl2"],
+  "fromCache": false, "stale": false, "ruleNote": null
+}</pre>
+      <h3 data-i18n="doc_resp_fields">字段说明</h3>
+      <table class="doc-tbl">
+        <thead><tr>
+          <th data-i18n="doc_th_field">字段</th>
+          <th data-i18n="doc_th_type">类型</th>
+          <th data-i18n="doc_th_desc">说明</th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>verdict</code></td><td><span class="mono">string</span></td><td data-i18n="doc_f_verdict"><code class="ep">yes</code>(稳定存在) / <code class="ep">conditional</code>(特定条件) / <code class="ep">unstable</code>(极不稳定) / <code class="ep">no</code>(通常不存在)</td></tr>
+          <tr><td><code>hazards</code></td><td><span class="mono">string[]</span></td><td data-i18n="doc_f_hazards">危险标签：<code class="ep">toxic</code>(剧毒) / <code class="ep">corrosive</code>(腐蚀) / <code class="ep">explosive</code>(爆炸) / <code class="ep">oxidize</code>(易氧化) / <code class="ep">unstable</code>(不稳定) / <code class="ep">charged</code>(带电)；无关则 <code class="ep">[]</code></td></tr>
+          <tr><td><code>redox</code></td><td><span class="mono">array</span></td><td data-i18n="doc_f_redox">氧化/还原性，按条件分类：<code class="ep">condition</code> + <code class="ep">behavior</code> + <code class="ep">detail</code>；无资料 <code class="ep">[]</code></td></tr>
+          <tr><td><code>colors</code></td><td><span class="mono">array</span></td><td data-i18n="doc_f_colors">颜色与形态，按形态分类：<code class="ep">form</code> + <code class="ep">color</code> + <code class="ep">hex</code> + <code class="ep">ion</code>；无资料 <code class="ep">[]</code></td></tr>
+          <tr><td><code>solubility</code></td><td><span class="mono">array</span></td><td data-i18n="doc_f_solubility">溶解度，按溶剂分类：<code class="ep">solvent</code> + <code class="ep">value</code> + <code class="ep">note</code>；无资料 <code class="ep">[]</code></td></tr>
+          <tr><td><code>electrode</code></td><td><span class="mono">array / nil</span></td><td data-i18n="doc_f_electrode">电极电势，按情形分类：<code class="ep">condition</code> + <code class="ep">reaction</code> + <code class="ep">e0</code> + <code class="ep">nernst</code> + <code class="ep">detail</code>；不构成电极体系则 <code class="ep">null</code>，前端显示"无"</td></tr>
+          <tr><td><code>composition</code></td><td><span class="mono">array</span></td><td data-i18n="doc_f_composition">元素质量分数：<code class="ep">symbol</code> + <code class="ep">name</code> + <code class="ep">count</code> + <code class="ep">massPct</code></td></tr>
+          <tr><td><code>source</code></td><td><span class="mono">string</span></td><td data-i18n="doc_f_source"><code class="ep">pubchem</code> / <code class="ep">workers-ai</code> / <code class="ep">knowledge-base</code> / <code class="ep">rule</code> / <code class="ep">rule-fallback</code></td></tr>
+          <tr><td><code>fromCache</code> / <code>stale</code></td><td><span class="mono">boolean</span></td><td data-i18n="doc_f_cache">是否来自 D1 缓存 / 是否过期（后台刷新中）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="doc-sec">
+      <h2 data-i18n="doc_sec_examples">调用示例</h2>
+      <h3 data-i18n="doc_ex_web">网页查询（同源，无需 key，无限）</h3>
+      <p data-i18n="doc_ex_web_p">直接在 <code class="ep">https://chem-check.zztool.dpdns.org</code> 页面输入化学式即可。</p>
+      <h3 data-i18n="doc_ex_ext">外部 API 调用（按 IP 自助额度，50 次/天/IP）</h3>
+      <pre class="code"><span class="c"># 物质判定（含深度联网）</span>
+curl "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&amp;deep=1"
+
+<span class="c"># 方程式配平</span>
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2"
+
+<span class="c"># 仅给反应物，AI 补全产物</span>
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH"
+<span class="c"># → { "equation":"HCl + NaOH → NaCl + H₂O", "mode":"completion", "type":"酸碱中和" }</span>
+
+<span class="c"># 双水解反应（本地规则自动识别）</span>
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
+<span class="c"># → { "equation":"2AlCl₃ + 3Na₂CO₃ + 3H₂O → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl", "type":"双水解" }</span>
+
+<span class="c"># 查看当前 IP 剩余额度</span>
+curl "https://chem-check.zztool.dpdns.org/api/usage"</pre>
+      <h3 data-i18n="doc_ex_err">超限（429）响应</h3>
+      <pre class="code"><span class="c">// 429（超限，当日额度用尽）</span>
+{ "ok": false, "error": "今日 API 调用已达上限（50 次/IP/天），请明日再试。",
+  "limit": { "used": 50, "limit": 50 } }</pre>
+      <div class="doc-hint" data-i18n="doc_ex_429">429 响应附带 Header：<code class="ep">X-RateLimit-Limit: 50</code>、<code class="ep">X-RateLimit-Remaining: 0</code>、<code class="ep">X-RateLimit-Reset: &lt;unix时间戳&gt;</code>、<code class="ep">Retry-After: 86400</code>。</div>
+    </div>
+  </section>
+
+  <footer class="foot" data-i18n="doc_footer">化学式速查 API · 教育用途，危险物质操作请遵循实验室规范</footer>
+</main>
+
+<script>
+(function initPrefs(){
+  var savedTheme = localStorage.getItem("chem_theme");
+  var savedLang  = localStorage.getItem("chem_lang") || "cn";
+  var doc = document.documentElement;
+  if(savedTheme) doc.setAttribute("data-theme", savedTheme);
+  else if(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    doc.setAttribute("data-theme","dark");
+  doc.setAttribute("data-lang", savedLang);
+  doc.lang = savedLang==="cn" ? "zh-CN" : "en";
+  window.__LANG = savedLang;
+  applyLangVisual();
+})();
+function applyLangVisual(){
+  var on = window.__LANG==="cn";
+  var segs = document.querySelectorAll("#lang-toggle .seg span");
+  if(segs.length===2){ segs[0].classList.toggle("on", on); segs[1].classList.toggle("on", !on); }
+  var theme = document.documentElement.getAttribute("data-theme");
+  var tsegs = document.querySelectorAll("#theme-toggle .seg span");
+  if(tsegs.length===2){ tsegs[0].classList.toggle("on", theme==="light"); tsegs[1].classList.toggle("on", theme==="dark"); }
+}
+document.getElementById("lang-toggle").addEventListener("click", function(){
+  window.__LANG = window.__LANG==="cn" ? "en" : "cn";
+  localStorage.setItem("chem_lang", window.__LANG);
+  var doc = document.documentElement;
+  doc.setAttribute("data-lang", window.__LANG);
+  doc.lang = window.__LANG==="cn" ? "zh-CN" : "en";
+  applyLangVisual();
+  applyI18n();
+});
+document.getElementById("theme-toggle").addEventListener("click", function(){
+  var cur = document.documentElement.getAttribute("data-theme");
+  var next = cur==="dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("chem_theme", next);
+  applyLangVisual();
+});
+var I18N = {
+  cn: {
+    doc_back:"返回首页 →", doc_eyebrow:"API REFERENCE · 接口参考",
+    doc_title:"API 调用文档",
+    doc_lede:"物质存在性判定、方程式配平与化学计量的一体化接口。网页同源查询免费无限；外部调用按 IP 自助额度，同一 IP 每日 50 次。",
+    doc_sec_access:"访问方式与限流", doc_th_method:"调用方式", doc_th_key:"API key", doc_th_rate:"限流",
+    doc_access_web:"网页查询", doc_access_web_sub:"同源 Origin / Referer 匹配站点域名，如本页面查询",
+    doc_no:"否", doc_access_web_rate:"不限，免费无限",
+    doc_access_ext:"外部 API 调用", doc_access_ext_sub:"跨域，如 curl / 其他网站 / 后端服务",
+    doc_yes:"否", doc_access_ext_rate:"同一 IP 每日 50 次",
+    doc_access_hint:"网页查询不计入限流。外部调用无需 key，按调用来源 IP 自动计算额度（50 次/天/IP）。",
+    doc_sec_key:"API 额度（无需 key）",
+    doc_key_p1:"外部调用无需申请 key——额度按调用来源 IP 自动计算（同一 IP 每日 50 次），随取随用：",
+    doc_key_hint:"旧版 <code class=\"ep\">API_KEYS</code> 静态 key 机制已废止，<code class=\"ep\">Authorization: Bearer</code> / <code class=\"ep\">X-Api-Key</code> 请求头不再校验。站长可在 <code class=\"ep\">/console</code>（需 <code class=\"ep\">CONSOLE_PASSWORD</code>）查看调用统计与限流配置。",
+    doc_sec_endpoints:"接口列表", doc_th_endpoint:"接口", doc_th_desc:"说明",
+    doc_ep_check:"物质存在性判定（<code class=\"ep\">deep=1</code> 触发联网兜底链）",
+    doc_ep_report:"上报信息有误，强制联网重查并更新缓存",
+    doc_ep_equation:"方程式配平 / 补全 / 化学计量",
+    doc_ep_health:"健康检查（无需 key）",
+    doc_sec_response:"统一响应结构",
+    doc_resp_p:"所有 <code class=\"ep\">/api/check</code> 和 <code class=\"ep\">/api/report</code> 的返回都经过<b>结构化归一化</b>——所有字段必现，无资料填 <code class=\"ep\">[]</code>（数组）或 <code class=\"ep\">null</code>（标量），不会出现字段缺失的情况。",
+    doc_resp_fields:"字段说明", doc_th_field:"字段", doc_th_type:"类型",
+    doc_f_verdict:"<code class=\"ep\">yes</code>(稳定存在) / <code class=\"ep\">conditional</code>(特定条件) / <code class=\"ep\">unstable</code>(极不稳定) / <code class=\"ep\">no</code>(通常不存在)",
+    doc_f_hazards:"危险标签：<code class=\"ep\">toxic</code>(剧毒) / <code class=\"ep\">corrosive</code>(腐蚀) / <code class=\"ep\">explosive</code>(爆炸) / <code class=\"ep\">oxidize</code>(易氧化) / <code class=\"ep\">unstable</code>(不稳定) / <code class=\"ep\">charged</code>(带电)；无关则 <code class=\"ep\">[]</code>",
+    doc_f_redox:"氧化/还原性，按条件分类：<code class=\"ep\">condition</code>(条件) + <code class=\"ep\">behavior</code>(氧化性/还原性/歧化/无) + <code class=\"ep\">detail</code>(具体描述)；无资料 <code class=\"ep\">[]</code>",
+    doc_f_colors:"颜色与形态，按形态分类：<code class=\"ep\">form</code>(固体/水溶液/气体) + <code class=\"ep\">color</code> + <code class=\"ep\">hex</code>(色值) + <code class=\"ep\">ion</code>(显色离子来源)；无资料 <code class=\"ep\">[]</code>",
+    doc_f_solubility:"溶解度，按溶剂分类：<code class=\"ep\">solvent</code>(水/乙醇/...) + <code class=\"ep\">value</code>(易溶/可溶/微溶/难溶/不溶) + <code class=\"ep\">note</code>(具体数值)；无资料 <code class=\"ep\">[]</code>",
+    doc_f_electrode:"电极电势，按情形分类：<code class=\"ep\">condition</code>(酸性/碱性/中性/非水/固态) + <code class=\"ep\">reaction</code>(半电池反应) + <code class=\"ep\">e0</code>(标准电势 E°) + <code class=\"ep\">nernst</code>(能斯特方程) + <code class=\"ep\">detail</code>(说明)；不构成电极体系则 <code class=\"ep\">null</code>，前端显示\"无\"",
+    doc_f_composition:"元素质量分数：<code class=\"ep\">symbol</code> + <code class=\"ep\">name</code> + <code class=\"ep\">count</code> + <code class=\"ep\">massPct</code>",
+    doc_f_source:"<code class=\"ep\">pubchem</code> / <code class=\"ep\">workers-ai</code> / <code class=\"ep\">knowledge-base</code> / <code class=\"ep\">rule</code> / <code class=\"ep\">rule-fallback</code>",
+    doc_f_cache:"是否来自 D1 缓存 / 是否过期（后台刷新中）",
+    doc_sec_examples:"调用示例",
+    doc_ex_web:"网页查询（同源，无需 key，无限）",
+    doc_ex_web_p:"直接在 <code class=\"ep\">https://chem-check.zztool.dpdns.org</code> 页面输入化学式即可。",
+    doc_ex_ext:"外部 API 调用（需 key，50 次/天/IP）",
+    doc_ex_err:"无 key 或 key 无效时的响应",
+    doc_ex_429:"429 响应附带 Header：<code class=\"ep\">X-RateLimit-Limit: 50</code>、<code class=\"ep\">X-RateLimit-Remaining: 0</code>、<code class=\"ep\">X-RateLimit-Reset: &lt;unix时间戳&gt;</code>、<code class=\"ep\">Retry-After: 86400</code>。",
+    doc_footer:"化学式速查 API · 教育用途，危险物质操作请遵循实验室规范"
+  },
+  en: {
+    doc_back:"← Back home", doc_eyebrow:"API REFERENCE",
+    doc_title:"API Documentation",
+    doc_lede:"Existence check, equation balancing and stoichiometry in one API. Same-origin page queries are free and unlimited; external calls use an automatic per-IP quota of 50 per day.",
+    doc_sec_access:"Access & Rate Limits", doc_th_method:"Method", doc_th_key:"API key", doc_th_rate:"Rate limit",
+    doc_access_web:"Web query", doc_access_web_sub:"Same-origin Origin / Referer matches the site domain, e.g. queries from this page",
+    doc_no:"No", doc_access_web_rate:"Unlimited, free",
+    doc_access_ext:"External API call", doc_access_ext_sub:"Cross-origin, e.g. curl / other sites / backend services",
+    doc_yes:"No", doc_access_ext_rate:"50 per IP per day",
+    doc_access_hint:"Page queries are not rate-limited. External calls need no key — a per-IP quota of 50/day is applied automatically.",
+    doc_sec_key:"API Quota (no key needed)",
+    doc_key_p1:"External calls need no key — the quota is computed automatically from the calling IP (50/day/IP). Just start calling:",
+    doc_key_hint:"The legacy <code class=\"ep\">API_KEYS</code> static-key mechanism is retired; <code class=\"ep\">Authorization: Bearer</code> / <code class=\"ep\">X-Api-Key</code> headers are no longer checked. The owner can view call stats and limit config at <code class=\"ep\">/console</code> (protected by <code class=\"ep\">CONSOLE_PASSWORD</code>).",
+    doc_sec_endpoints:"Endpoints", doc_th_endpoint:"Endpoint", doc_th_desc:"Description",
+    doc_ep_check:"Existence check (<code class=\"ep\">deep=1</code> triggers the online fallback chain)",
+    doc_ep_report:"Report wrong info, force an online recheck and update the cache",
+    doc_ep_equation:"Equation balancing / completion / stoichiometry",
+    doc_ep_health:"Health check (no key required)",
+    doc_sec_response:"Unified Response Shape",
+    doc_resp_p:"All <code class=\"ep\">/api/check</code> and <code class=\"ep\">/api/report</code> responses are <b>normalized</b> — every field is always present; missing data is <code class=\"ep\">[]</code> (array) or <code class=\"ep\">null</code> (scalar). No fields ever go missing.",
+    doc_resp_fields:"Field Reference", doc_th_field:"Field", doc_th_type:"Type",
+    doc_f_verdict:"<code class=\"ep\">yes</code>(stable) / <code class=\"ep\">conditional</code>(special conditions) / <code class=\"ep\">unstable</code>(highly unstable) / <code class=\"ep\">no</code>(usually nonexistent)",
+    doc_f_hazards:"Hazard labels: <code class=\"ep\">toxic</code> / <code class=\"ep\">corrosive</code> / <code class=\"ep\">explosive</code> / <code class=\"ep\">oxidize</code> / <code class=\"ep\">unstable</code> / <code class=\"ep\">charged</code>; <code class=\"ep\">[]</code> if none",
+    doc_f_redox:"Redox, by condition: <code class=\"ep\">condition</code> + <code class=\"ep\">behavior</code>(oxidizing/reducing/disproportionation/none) + <code class=\"ep\">detail</code>; <code class=\"ep\">[]</code> if no data",
+    doc_f_colors:"Color & form, by form: <code class=\"ep\">form</code>(solid/aqueous/gas) + <code class=\"ep\">color</code> + <code class=\"ep\">hex</code> + <code class=\"ep\">ion</code>(color source); <code class=\"ep\">[]</code> if no data",
+    doc_f_solubility:"Solubility, by solvent: <code class=\"ep\">solvent</code> + <code class=\"ep\">value</code>(soluble/slightly/insoluble) + <code class=\"ep\">note</code>(values); <code class=\"ep\">[]</code> if no data",
+    doc_f_electrode:"Electrode potential, by condition: <code class=\"ep\">condition</code>(acidic/alkaline/neutral/non-aqueous/solid) + <code class=\"ep\">reaction</code>(half-cell) + <code class=\"ep\">e0</code>(standard E°) + <code class=\"ep\">nernst</code>(Nernst eq) + <code class=\"ep\">detail</code>; <code class=\"ep\">null</code> if not an electrode system, frontend shows \"None\"",
+    doc_f_composition:"Element mass fraction: <code class=\"ep\">symbol</code> + <code class=\"ep\">name</code> + <code class=\"ep\">count</code> + <code class=\"ep\">massPct</code>",
+    doc_f_source:"<code class=\"ep\">pubchem</code> / <code class=\"ep\">workers-ai</code> / <code class=\"ep\">knowledge-base</code> / <code class=\"ep\">rule</code> / <code class=\"ep\">rule-fallback</code>",
+    doc_f_cache:"Served from D1 cache / stale (refreshing in background)",
+    doc_sec_examples:"Examples",
+    doc_ex_web:"Web query (same-origin, no key, unlimited)",
+    doc_ex_web_p:"Type a formula on the <code class=\"ep\">https://chem-check.zztool.dpdns.org</code> page.",
+    doc_ex_ext:"External API call (per-IP quota, 50/day/IP)",
+    doc_ex_err:"Rate-limit (429) response",
+    doc_ex_429:"429 responses carry headers: <code class=\"ep\">X-RateLimit-Limit: 50</code>, <code class=\"ep\">X-RateLimit-Remaining: 0</code>, <code class=\"ep\">X-RateLimit-Reset: &lt;unix timestamp&gt;</code>, <code class=\"ep\">Retry-After: 86400</code>.",
+    doc_footer:"Chemical Assay API · For education — follow lab safety for hazardous substances"
+  }
+};
+function applyI18n(){
+  var dict = I18N[window.__LANG];
+  document.querySelectorAll("[data-i18n]").forEach(function(el){
+    var k = el.getAttribute("data-i18n");
+    if(dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+applyI18n();
+</script>
+</body>
+</html>

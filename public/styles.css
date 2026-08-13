@@ -393,3 +393,153 @@ td.f .cdot{ margin-left:8px; }
 .electrode-table td.el-e0, .electrode-table td.el-nernst{ font-family:var(--mono); }
 .electrode-table td.el-detail{ color:var(--ink-2); }
 .sec-empty{ color:var(--ink-3); font-size:13px; }
+
+/* ============================================================
+   API 调用文档页
+   ============================================================ */
+.doc-head{ margin:34px 0 10px; }
+.doc-eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:2.5px;
+  text-transform:uppercase; color:var(--accent); margin:0 0 12px; }
+.doc-head h1{
+  font-family:var(--serif); font-weight:600; letter-spacing:-.02em;
+  font-size:clamp(28px,5vw,44px); line-height:1.05; margin:0 0 12px;
+}
+.doc-lede{ color:var(--ink-2); font-size:15px; max-width:62ch; margin:0; }
+
+.doc-body{ border-top:1px solid var(--line-strong); }
+.doc-sec{ padding:18px 22px; border-bottom:1px solid var(--line); }
+.doc-sec:last-child{ border-bottom:none; }
+.doc-sec h2{
+  margin:0 0 12px; font-family:var(--mono); font-size:11px; letter-spacing:2px;
+  font-weight:600; text-transform:uppercase; color:var(--accent);
+  display:flex; align-items:center; gap:8px;
+}
+.doc-sec h2::before{ content:""; width:14px; height:1px; background:var(--accent); }
+.doc-sec h3{ font-family:var(--serif); font-size:16px; font-weight:600; margin:18px 0 8px; }
+.doc-sec p{ margin:8px 0; color:var(--ink-2); font-size:14px; }
+.doc-sec strong{ color:var(--ink); }
+.doc-sec ul{ margin:6px 0 8px; padding-left:18px; }
+.doc-sec li{ margin:4px 0; font-size:14px; color:var(--ink-2); }
+.doc-sec li strong{ color:var(--ink); }
+
+.doc-tbl{ width:100%; border-collapse:collapse; font-size:13.5px; }
+.doc-tbl th{
+  text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:1.5px;
+  color:var(--ink-3); text-transform:uppercase; padding:7px 9px;
+  border-bottom:1px solid var(--line-strong);
+}
+.doc-tbl td{ padding:8px 9px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--ink-2); }
+.doc-tbl tr:last-child td{ border-bottom:none; }
+.doc-tbl td b{ color:var(--ink); font-weight:600; }
+.doc-tbl td code,
+.doc-tbl td .mono{ font-family:var(--mono); color:var(--indigo); font-size:12.5px; }
+.doc-tbl .nowrap{ white-space:nowrap; }
+
+pre.code{
+  background:var(--paper-inset); border:1px solid var(--line); border-left:3px solid var(--ink);
+  padding:13px 16px; overflow-x:auto; font-family:var(--mono); font-size:12.5px;
+  line-height:1.75; color:var(--ink); border-radius:2px; margin:10px 0;
+}
+pre.code .c{ color:var(--ink-3); }
+pre.code .hl{ color:var(--accent); }
+
+.doc-hint{
+  border-left:4px solid var(--indigo); background:var(--paper-inset);
+  padding:9px 13px; margin:10px 0; font-size:13.5px; color:var(--ink); border-radius:2px;
+}
+.doc-hint b{ color:var(--indigo); }
+.doc-hint.warn{ border-left-color:var(--unstable); }
+.doc-hint.warn b{ color:var(--unstable); }
+.doc-tag{
+  display:inline-block; font-family:var(--mono); font-size:11px; font-weight:600;
+  padding:2px 7px; border-radius:2px; border:1px solid currentColor; letter-spacing:.5px;
+}
+.doc-tag.ok{ color:var(--yes); }
+.doc-tag.key{ color:var(--conditional); }
+.doc-tag.no{ color:var(--no); }
+.ep{ font-family:var(--mono); color:var(--indigo); }
+.ep-method{ font-family:var(--mono); color:var(--accent); font-weight:600; }
+
+/* ============================================================
+   API 额度页 /usage 与站长控制台 /console
+   ============================================================ */
+/* —— 额度页 —— */
+.quota-card{
+  background:var(--paper-2); border:1px solid var(--line-strong);
+  border-radius:var(--radius); padding:24px 26px; margin:18px 0 8px;
+  display:flex; flex-direction:column; gap:16px; align-items:center;
+}
+.quota-ip{ text-align:center; }
+.quota-label{
+  display:block; font-family:var(--mono); font-size:11px; letter-spacing:1.5px;
+  color:var(--ink-3); text-transform:uppercase; margin-bottom:4px;
+}
+.quota-value{ font-family:var(--mono); font-size:18px; color:var(--indigo); }
+.quota-ring-wrap{ position:relative; width:150px; height:150px; }
+.quota-ring{
+  --p:0deg;
+  width:150px; height:150px; border-radius:50%;
+  background:conic-gradient(var(--accent) var(--p), var(--line) 0deg);
+  display:flex; align-items:center; justify-content:center;
+}
+.quota-ring-inner{
+  width:112px; height:112px; border-radius:50%; background:var(--paper-2);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+}
+.quota-big{ font-family:var(--serif); font-size:38px; font-weight:700; color:var(--ink); line-height:1; }
+.quota-sub{ font-family:var(--mono); font-size:11px; color:var(--ink-3); letter-spacing:1px; }
+.quota-stats{ display:flex; gap:34px; }
+.quota-stat{ text-align:center; }
+.quota-stat .quota-num{ display:block; font-family:var(--mono); font-size:17px; color:var(--ink); margin-top:2px; }
+.quota-bar{
+  width:100%; height:6px; background:var(--paper-inset); border-radius:3px; overflow:hidden;
+}
+.quota-bar-fill{
+  height:100%; width:0%; background:var(--accent); transition:width .4s ease;
+}
+.quota-note{ font-size:12.5px; color:var(--ink-3); margin:0; text-align:center; }
+.quota-error{ font-size:13px; color:var(--no); margin:0; }
+
+/* —— 控制台 —— */
+.login-form{
+  margin:22px 0 6px; max-width:380px; display:flex; flex-direction:column; gap:10px;
+}
+.login-label{ font-family:var(--mono); font-size:11px; letter-spacing:1.5px; color:var(--ink-3); text-transform:uppercase; }
+.login-input{
+  font-family:var(--mono); font-size:14px; padding:9px 12px;
+  background:var(--paper-2); color:var(--ink); border:1px solid var(--line-strong);
+  border-radius:var(--radius); outline:none;
+}
+.login-input:focus{ border-color:var(--accent); }
+.login-btn{
+  font-family:var(--mono); font-size:13px; letter-spacing:1px; padding:9px 16px;
+  background:var(--accent); color:var(--paper); border:none; border-radius:var(--radius);
+  cursor:pointer; text-transform:uppercase;
+}
+.login-btn:hover{ background:var(--accent-deep); }
+.login-error{ font-size:13px; color:var(--no); margin:4px 0 0; }
+
+.con-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin:16px 0 8px; }
+.con-card{
+  background:var(--paper-2); border:1px solid var(--line); border-radius:var(--radius);
+  padding:14px 16px; display:flex; flex-direction:column; gap:6px;
+}
+.con-k{ font-family:var(--mono); font-size:11px; letter-spacing:1px; color:var(--ink-3); text-transform:uppercase; }
+.con-v{ font-family:var(--serif); font-size:28px; font-weight:600; color:var(--ink); line-height:1; }
+.con-sub{ font-size:13px; color:var(--ink-2); }
+
+.trend-bars{
+  display:flex; align-items:flex-end; gap:10px; min-height:120px; padding:12px 4px 0;
+}
+.trend-bar{ display:flex; flex-direction:column; align-items:center; justify-content:flex-end; flex:1; height:110px; gap:3px; }
+.trend-bar-h{
+  width:70%; max-width:36px; background:var(--indigo); border-radius:2px 2px 0 0;
+  min-height:2px;
+}
+.trend-bar-l{ font-family:var(--mono); font-size:10px; color:var(--ink-3); }
+.trend-bar-c{ font-family:var(--mono); font-size:11px; color:var(--ink-2); }
+.con-empty{ font-size:13px; color:var(--ink-3); }
+
+.con-cols{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:20px; margin-top:8px; }
+.con-cols .doc-tbl th, .con-cols .doc-tbl td{ white-space:normal; word-break:break-word; }
+.con-cols h3{ margin-top:0; }

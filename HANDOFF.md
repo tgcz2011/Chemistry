@@ -60,6 +60,8 @@
 | 21 | **统一结构化返回** | 所有字段必现，缺失填 `[]`/`null`；`tags` 改名 `hazards` | `normalizeResult()` |
 | 22 | **API 网关与限流** | 同源网页免费无限；外部调用需 key（Authorization: Bearer 优先）且按 IP 限 50/天；CORS 收敛（不再通配 `*`） | `apiGate()` + `api_usage` 表 |
 | 23 | **电极电势** | 按情形（酸性/碱性/中性/非水/固态）给出半电池反应、E° 与能斯特方程；本地 ELECTRODE 表约 210 种 + AI 兜底 | `electrode` 字段 |
+| 24 | **API 调用文档页** | 首页右上角「API ↗」跳转 `public/docs/api.html`（规范路径 `/docs/api`），双语文档：访问方式/限流、获取 key、接口列表、统一响应结构与字段说明、curl 示例、401/403/429 响应；独立内联脚本复用 `chem_lang`/`chem_theme` | `/docs/api` |
+| 25 | **纯 IP 额度 + 站长控制台** | 外部 API 调用废止静态 key，改为按 IP 自助额度（50 次/天/IP）；公开额度页 `/usage`（含 `GET /api/usage` 接口）；站长控制台 `/console`（`CONSOLE_PASSWORD` 签名 cookie 登录），含运行总览/近 7 日趋势/调用目的地 TOP（Referer·地域·UA）/物质查询统计/上报纠错统计/API 配置 | `/usage`、`/console`、`/api/usage`、`/api/console/*` |
 
 ---
 
@@ -173,6 +175,9 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 21. **wrangler OAuth token 会过期且 refresh_token 可能同时失效**。在非交互环境（如 CI/沙箱）无法 `wrangler login`。→ 需设 `CLOUDFLARE_API_TOKEN` 环境变量，或交互式 `wrangler login`。token 过期时 `wrangler whoami` 报 "auth token has expired"。
 22. **CORS 原先是通配 `*`**，任何站点都能跨域读 API 且无需 key。→ 已收敛为 `applyCors`：同源不加 CORS 头；跨域必须带有效 key 才回显来源（未授权响应不设 CORS，浏览器读不到）；`OPTIONS` 预检单独处理（允许 Authorization/X-Api-Key 头）。改 CORS 时注意"未提供 key"的 401 与"key 无效"的 403 的 authorized 参数不同（前者 false、后者 true），否则失败响应可能被浏览器读取。
 23. **在 chem-engine.js 大段插入数据表时，误删了 `export const COLORS = {` 声明头**，导致 COLORS 内容成了孤儿对象、模块整体 SyntaxError。→ 在巨型对象之间插表后务必 `node --check` + 实际 import 验证模块可加载，并检查新表与既有表（KNOWNS/COLORS）的声明头、闭合 `};` 是否齐全。另：ELECTRODE 新表插入在 COLORS 之前，属"新增数据表放独立导出对象"（不动 KNOWNS/COLORS 键）以保零回归。
+24. **Cloudflare 静态资源（ASSETS）会把 `foo.html` 规范化为无扩展名路径**：请求 `/api.html` 返回 307 → `/api`，请求 `/index.html` 返回 307 → `/`。→ 新增静态页面用**规范路径**（如 `public/docs/api.html` → `/docs/api`）直链，别链 `.html` 后缀（会多一次重定向）；也避免把文件命名成 `/api.html` 这类与 API 命名空间近似的名字。**新增静态页后务必用 curl 验证实际可访问**（走 ASSETS，本地 dev 也能测）。
+25. **本地 D1 新增表后必须跑迁移，否则 batch 静默失败**：`checkAndIncrApi` 里计数（api_usage）与明细（api_call_log）用 `env.DB.batch` 同批写入；若新表未迁移，batch 抛错被 catch 吞掉，表现为"调用放行了但计数不涨"（`/api/usage` 恒为 0）且无任何报错。→ 新增迁移文件后执行 `npx wrangler d1 migrations apply <dbname> --local` 再测。
+26. **`applyCors` 的 `authorized` 语义与 key 机制解耦**：废止 key 后，"放行的外部调用"仍要回显来源 Origin（浏览器可读），同源调用不需要 CORS 头。改 apiGate 时保持 `{denied:false, authorized:true}` 对放行的外部调用返回，否则跨域浏览器读不到响应。
 
 ---
 

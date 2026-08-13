@@ -73,8 +73,8 @@ export async function setEqCached(env, key, result){
 }
 
 // ---- 外部 API 调用限流：同一 IP 每日 ≤ 50 次（网页同源查询不计）----
-const API_DAILY_LIMIT = 50;
-export async function checkAndIncrApi(env, ip){
+export const API_DAILY_LIMIT = 50;
+export async function checkAndIncrApi(env, ip, meta){
   if(!env?.DB || !ip) return { allowed:true, used:0, limit:API_DAILY_LIMIT };
   const today = new Date().toISOString().slice(0,10);
   try{
@@ -83,14 +83,113 @@ export async function checkAndIncrApi(env, ip){
     ).bind(ip, today).first();
     const used = Number(row?.count)||0;
     if(used >= API_DAILY_LIMIT) return { allowed:false, used, limit:API_DAILY_LIMIT };
-    await env.DB.prepare(
+    // 计数与明细同批写入：限流通过后两者都写，失败则整体报错由调用方兜底
+    const stmt = env.DB.prepare(
       "INSERT INTO api_usage (ip, usage_date, count) VALUES (?,?,1) " +
       "ON CONFLICT(ip, usage_date) DO UPDATE SET count=count+1"
-    ).bind(ip, today).run();
+    ).bind(ip, today);
+    let logStmt = null;
+    if (meta) {
+      logStmt = env.DB.prepare(
+        "INSERT INTO api_call_log (ip, call_date, referer, country, ua) VALUES (?,?,?,?,?)"
+      ).bind(ip, today, meta.referer||null, meta.country||null, meta.ua||null);
+    }
+    if (logStmt) await env.DB.batch([stmt, logStmt]);
+    else await stmt.run();
     return { allowed:true, used:used+1, limit:API_DAILY_LIMIT };
   }catch{
     return { allowed:true, used:0, limit:API_DAILY_LIMIT };
   }
+}
+
+// 异步清理 api_call_log：仅保留近 30 天（控制台统计窗口）
+export async function pruneApiLog(env, days = 30){
+  if(!env?.DB) return;
+  const cutoff = new Date(Date.now() - days*86400e3).toISOString().slice(0,10);
+  try{ await env.DB.prepare("DELETE FROM api_call_log WHERE call_date < ?").bind(cutoff).run(); }
+  catch{ /* 清理失败不影响主流程 */ }
+}
+
+// ---- 控制台统计查询（均假定已通过会话鉴权）----
+
+// 今日/累计外部调用数与今日已用 IP 数
+export async function sumApiUsage(env){
+  if(!env?.DB) return { today:0, total:0, todayIps:0 };
+  const today = new Date().toISOString().slice(0,10);
+  try{
+    const todayRow = await env.DB.prepare(
+      "SELECT COALESCE(SUM(count),0) AS c FROM api_usage WHERE usage_date=?"
+    ).bind(today).first();
+    const totalRow = await env.DB.prepare(
+      "SELECT COALESCE(SUM(count),0) AS c FROM api_usage"
+    ).first();
+    const todayIps = await env.DB.prepare(
+      "SELECT COUNT(*) AS c FROM api_usage WHERE usage_date=?"
+    ).bind(today).first();
+    return { today: Number(todayRow?.c)||0, total: Number(totalRow?.c)||0, todayIps: Number(todayIps?.c)||0 };
+  }catch{ return { today:0, total:0, todayIps:0 }; }
+}
+
+// 近 N 日外部调用趋势：按日期聚合 api_call_log
+export async function trendApiLog(env, days = 7){
+  if(!env?.DB) return [];
+  const start = new Date(Date.now() - days*86400e3).toISOString().slice(0,10);
+  try{
+    const rows = await env.DB.prepare(
+      "SELECT call_date AS date, COUNT(*) AS count FROM api_call_log WHERE call_date >= ? GROUP BY call_date ORDER BY date ASC"
+    ).bind(start).all();
+    return (rows.results||[]).map(r => ({ date: r.date, count: Number(r.count)||0 }));
+  }catch{ return []; }
+}
+
+// 目的地统计：Referer 域名 / 地域 / UA 三组 TOP
+export async function destTopApi(env, top = 10){
+  if(!env?.DB) return { referer:[], country:[], ua:[] };
+  const dims = [
+    ["referer", "referer"],
+    ["country", "country"],
+    ["ua", "ua"]
+  ];
+  const out = {};
+  for (const [key, col] of dims) {
+    try{
+      const rows = await env.DB.prepare(
+        `SELECT ${col} AS name, COUNT(*) AS count FROM api_call_log GROUP BY ${col} ORDER BY count DESC LIMIT ?`
+      ).bind(top).all();
+      out[key] = (rows.results||[]).map(r => ({ name: r.name || "(空)", count: Number(r.count)||0 }));
+    }catch{ out[key] = []; }
+  }
+  return out;
+}
+
+// formula_cache 最近更新 TOP（仅缓存过的化学式，按 updated_at 降序）
+export async function formulaTopCache(env, top = 10){
+  if(!env?.DB) return { total:0, top:[] };
+  try{
+    const totalRow = await env.DB.prepare("SELECT COUNT(*) AS c FROM formula_cache").first();
+    const rows = await env.DB.prepare(
+      "SELECT formula, name, source, updated_at FROM formula_cache WHERE formula NOT LIKE 'eq:%' ORDER BY updated_at DESC LIMIT ?"
+    ).bind(top).all();
+    return { total: Number(totalRow?.c)||0, top:(rows.results||[]).map(r => ({ formula:r.formula, name:r.name||"", source:r.source||"", updatedAt:Number(r.updated_at)||0 })) };
+  }catch{ return { total:0, top:[] }; }
+}
+
+// 上报纠错统计：今日/累计总数 + 按化学式聚合 TOP
+export async function reportTop(env, top = 10){
+  if(!env?.DB) return { today:0, total:0, top:[] };
+  const today = new Date().toISOString().slice(0,10);
+  try{
+    const todayRow = await env.DB.prepare(
+      "SELECT COALESCE(SUM(count),0) AS c FROM report_usage WHERE report_date=?"
+    ).bind(today).first();
+    const totalRow = await env.DB.prepare(
+      "SELECT COALESCE(SUM(count),0) AS c FROM report_usage"
+    ).first();
+    const rows = await env.DB.prepare(
+      "SELECT formula, SUM(count) AS c FROM report_usage GROUP BY formula ORDER BY c DESC LIMIT ?"
+    ).bind(top).all();
+    return { today: Number(todayRow?.c)||0, total: Number(totalRow?.c)||0, top:(rows.results||[]).map(r => ({ formula:r.formula, count:Number(r.c)||0 })) };
+  }catch{ return { today:0, total:0, top:[] }; }
 }
 
 // ---- 上报限流：同一设备每日 ≤ 20 次、单化学式每日 ≤ 3 次 ----

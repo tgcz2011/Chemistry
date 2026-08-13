@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-lang="cn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>API 额度查询 · API Usage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<div class="toprule" aria-hidden="true"></div>
+
+<main class="wrap">
+  <header class="masthead">
+    <div class="mast-left">
+      <span class="doc-no">QUOTA·01</span>
+      <a class="brand" href="/" style="text-decoration:none;color:inherit" data-i18n="brand">化学式速查</a>
+      <span class="brand-en">API USAGE</span>
+    </div>
+    <div class="mast-right">
+      <button class="toggle-btn" id="lang-toggle" title="切换语言 / Switch language">
+        <span class="seg"><span class="on">中</span><span>EN</span></span>
+      </button>
+      <button class="toggle-btn" id="theme-toggle" title="切换主题 / Switch theme">
+        <span class="seg"><span class="on">☀</span><span>☾</span></span>
+      </button>
+      <a class="mast-link" href="/" rel="noopener" data-i18n="u_back">返回首页 →</a>
+    </div>
+  </header>
+  <hr class="rule" />
+
+  <section class="doc-head">
+    <p class="doc-eyebrow" data-i18n="u_eyebrow">API QUOTA · 额度查询</p>
+    <h1 data-i18n="u_title">API 调用额度</h1>
+    <p class="doc-lede" data-i18n="u_lede">查看当前 IP 今天还能调用多少次 API。网页查询免费无限；外部调用同一 IP 每日 50 次。</p>
+  </section>
+
+  <section class="doc-body">
+    <div class="quota-card" id="quota-card">
+      <div class="quota-ip">
+        <span class="quota-label" data-i18n="u_ip">当前 IP</span>
+        <code class="quota-value" id="q-ip">--</code>
+      </div>
+      <div class="quota-ring-wrap">
+        <div class="quota-ring" id="q-ring">
+          <div class="quota-ring-inner">
+            <span class="quota-big" id="q-remaining">--</span>
+            <span class="quota-sub" data-i18n="u_remaining_sub">剩余次数</span>
+          </div>
+        </div>
+      </div>
+      <div class="quota-stats">
+        <div class="quota-stat">
+          <span class="quota-label" data-i18n="u_used">今日已用</span>
+          <span class="quota-num" id="q-used">--</span>
+        </div>
+        <div class="quota-stat">
+          <span class="quota-label" data-i18n="u_limit">每日上限</span>
+          <span class="quota-num" id="q-limit">--</span>
+        </div>
+        <div class="quota-stat">
+          <span class="quota-label" data-i18n="u_reset">重置时间</span>
+          <span class="quota-num" id="q-reset">--</span>
+        </div>
+      </div>
+      <div class="quota-bar"><div class="quota-bar-fill" id="q-bar"></div></div>
+      <p class="quota-note" data-i18n="u_note">额度按 IP 计算，切换网络（如手机热点 / VPN）后额度独立。</p>
+      <p class="quota-error" id="q-error" hidden data-i18n="u_error">额度信息加载失败，请稍后重试。</p>
+    </div>
+
+    <div class="doc-sec">
+      <h2 data-i18n="u_sec_how">额度的计算方式</h2>
+      <table class="doc-tbl">
+        <thead><tr>
+          <th data-i18n="u_th_type">调用方式</th>
+          <th data-i18n="u_th_need">需要 key</th>
+          <th data-i18n="u_th_rate">限流</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><b data-i18n="u_web">网页查询</b><br/><span data-i18n="u_web_sub">在本站页面内直接查询化学式</span></td>
+            <td><span class="doc-tag no" data-i18n="u_no">否</span></td>
+            <td data-i18n="u_web_rate">不限，免费无限</td>
+          </tr>
+          <tr>
+            <td><b data-i18n="u_ext">外部 API 调用</b><br/><span data-i18n="u_ext_sub">curl / 脚本 / 其他网站后端</span></td>
+            <td><span class="doc-tag no" data-i18n="u_no2">否</span></td>
+            <td><b data-i18n="u_ext_rate">同一 IP 每日 50 次</b></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="doc-hint" data-i18n="u_hint">外部调用无需申请 key——按调用来源 IP 自动计算额度，随取随用。</div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span data-i18n="u_footer">化学式速查 API · 教育用途，危险物质操作请遵循实验室规范</span>
+  </footer>
+</main>
+
+<script>
+(function(){
+  var doc = document.documentElement;
+  var savedLang = localStorage.getItem("chem_lang") || "cn";
+  var savedTheme = localStorage.getItem("chem_theme") || "light";
+  doc.setAttribute("data-theme", savedTheme);
+  doc.setAttribute("data-lang", savedLang);
+  doc.lang = savedLang==="cn" ? "zh-CN" : "en";
+  window.__LANG = savedLang;
+  applyLangVisual();
+
+  var I18N = {
+    cn: {
+      brand:"化学式速查", u_back:"返回首页 →", u_eyebrow:"API QUOTA · 额度查询",
+      u_title:"API 调用额度", u_lede:"查看当前 IP 今天还能调用多少次 API。网页查询免费无限；外部调用同一 IP 每日 50 次。",
+      u_ip:"当前 IP", u_remaining_sub:"剩余次数", u_used:"今日已用", u_limit:"每日上限", u_reset:"重置时间",
+      u_note:"额度按 IP 计算，切换网络（如手机热点 / VPN）后额度独立。", u_error:"额度信息加载失败，请稍后重试。",
+      u_sec_how:"额度的计算方式", u_th_type:"调用方式", u_th_need:"需要 key", u_th_rate:"限流",
+      u_web:"网页查询", u_web_sub:"在本站页面内直接查询化学式", u_no:"否", u_web_rate:"不限，免费无限",
+      u_ext:"外部 API 调用", u_ext_sub:"curl / 脚本 / 其他网站后端", u_no2:"否", u_ext_rate:"同一 IP 每日 50 次",
+      u_hint:"外部调用无需申请 key——按调用来源 IP 自动计算额度，随取随用。",
+      u_footer:"化学式速查 API · 教育用途，危险物质操作请遵循实验室规范"
+    },
+    en: {
+      brand:"Chemical Quick-Check", u_back:"← Back home", u_eyebrow:"API QUOTA",
+      u_title:"API Usage Quota", u_lede:"See how many API calls your current IP has left today. Web queries are free and unlimited; external calls are limited to 50 per IP per day.",
+      u_ip:"Current IP", u_remaining_sub:"calls remaining", u_used:"Used today", u_limit:"Daily limit", u_reset:"Resets at",
+      u_note:"Quota is tracked per IP. Switching networks (e.g. mobile hotspot / VPN) gives you a fresh quota.", u_error:"Failed to load quota. Please try again later.",
+      u_sec_how:"How the quota works", u_th_type:"Method", u_th_need:"Key needed", u_th_rate:"Rate limit",
+      u_web:"Web query", u_web_sub:"Query a formula directly on this site", u_no:"No", u_web_rate:"Unlimited, free",
+      u_ext:"External API call", u_ext_sub:"curl / scripts / other-site backends", u_no2:"No", u_ext_rate:"50 per IP per day",
+      u_hint:"No API key needed — the quota is computed automatically from the calling IP. Just start calling.",
+      u_footer:"Chemical Assay API · For education — follow lab safety for hazardous substances"
+    }
+  };
+  function applyI18n(){
+    var dict = I18N[window.__LANG];
+    document.querySelectorAll("[data-i18n]").forEach(function(el){
+      var k = el.getAttribute("data-i18n");
+      if(dict[k] != null) el.innerHTML = dict[k];
+    });
+  }
+  function applyLangVisual(){
+    var on = window.__LANG==="cn";
+    var segs = document.querySelectorAll("#lang-toggle .seg span");
+    if(segs.length===2){ segs[0].classList.toggle("on", on); segs[1].classList.toggle("on", !on); }
+    var theme = document.documentElement.getAttribute("data-theme");
+    var tsegs = document.querySelectorAll("#theme-toggle .seg span");
+    if(tsegs.length===2){ tsegs[0].classList.toggle("on", theme==="light"); tsegs[1].classList.toggle("on", theme==="dark"); }
+  }
+  document.getElementById("lang-toggle").addEventListener("click", function(){
+    window.__LANG = window.__LANG==="cn" ? "en" : "cn";
+    localStorage.setItem("chem_lang", window.__LANG);
+    var d = document.documentElement;
+    d.setAttribute("data-lang", window.__LANG);
+    d.lang = window.__LANG==="cn" ? "zh-CN" : "en";
+    applyLangVisual(); applyI18n();
+  });
+  document.getElementById("theme-toggle").addEventListener("click", function(){
+    var cur = document.documentElement.getAttribute("data-theme");
+    var next = cur==="dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("chem_theme", next);
+    applyLangVisual();
+  });
+  applyI18n();
+
+  function loadQuota(){
+    fetch("/api/usage").then(function(r){ return r.json(); }).then(function(d){
+      if(!d || d.ok === false) throw new Error("bad");
+      var remaining = Math.max(0, d.remaining);
+      document.getElementById("q-ip").textContent = d.ip || "--";
+      document.getElementById("q-remaining").textContent = String(remaining);
+      document.getElementById("q-used").textContent = String(d.used||0);
+      document.getElementById("q-limit").textContent = String(d.limit||50);
+      var reset = d.reset ? new Date(d.reset*1000) : null;
+      document.getElementById("q-reset").textContent = reset ? reset.toLocaleTimeString(window.__LANG==="cn"?"zh-CN":"en-US",{hour:"2-digit",minute:"2-digit"}) : "--";
+      var pct = d.limit ? Math.min(100, Math.round((d.used/d.limit)*100)) : 0;
+      document.getElementById("q-bar").style.width = pct + "%";
+      // 环显示剩余比例
+      var rpct = d.limit ? Math.max(0, Math.min(1, remaining/d.limit)) : 0;
+      var ring = document.getElementById("q-ring");
+      ring.style.setProperty("--p", (rpct*360).toFixed(1)+"deg");
+      document.getElementById("q-error").hidden = true;
+    }).catch(function(){
+      document.getElementById("q-error").hidden = false;
+    });
+  }
+  loadQuota();
+  setInterval(loadQuota, 5000);
+})();
+</script>
+</body>
+</html>

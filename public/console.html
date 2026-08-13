@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-lang="cn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>控制台 · Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<div class="toprule" aria-hidden="true"></div>
+
+<main class="wrap">
+  <header class="masthead">
+    <div class="mast-left">
+      <span class="doc-no">CONSOLE·01</span>
+      <a class="brand" href="/" style="text-decoration:none;color:inherit" data-i18n="brand">化学式速查</a>
+      <span class="brand-en">STATION CONSOLE</span>
+    </div>
+    <div class="mast-right">
+      <button class="toggle-btn" id="lang-toggle" title="切换语言 / Switch language">
+        <span class="seg"><span class="on">中</span><span>EN</span></span>
+      </button>
+      <button class="toggle-btn" id="theme-toggle" title="切换主题 / Switch theme">
+        <span class="seg"><span class="on">☀</span><span>☾</span></span>
+      </button>
+      <button class="mast-link" id="logout-btn" data-i18n="c_logout" hidden>退出登录 →</button>
+      <a class="mast-link" href="/" rel="noopener" data-i18n="c_back">返回首页 →</a>
+    </div>
+  </header>
+  <hr class="rule" />
+
+  <!-- 登录视图 -->
+  <section class="doc-head" id="login-view">
+    <p class="doc-eyebrow" data-i18n="c_eyebrow">OWNER ONLY · 站长专用</p>
+    <h1 data-i18n="c_login_title">控制台登录</h1>
+    <p class="doc-lede" data-i18n="c_login_lede">输入控制台密码以查看统计数据与 API 配置。</p>
+    <form class="login-form" id="login-form">
+      <label class="login-label" for="password" data-i18n="c_password">密码</label>
+      <input class="login-input" type="password" id="password" name="password" autocomplete="current-password" required />
+      <button class="login-btn" type="submit" data-i18n="c_login_btn">登录</button>
+      <p class="login-error" id="login-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- 控制台视图 -->
+  <section class="doc-body" id="console-view" hidden>
+    <div class="doc-head">
+      <p class="doc-eyebrow" data-i18n="c_eyebrow2">STATION OVERVIEW · 运行总览</p>
+      <h1 data-i18n="c_title">控制台</h1>
+    </div>
+
+    <!-- 汇总卡片 -->
+    <div class="con-grid" id="summary-grid">
+      <div class="con-card"><span class="con-k" data-i18n="c_today_calls">今日外部调用</span><span class="con-v" id="s-today-calls">--</span></div>
+      <div class="con-card"><span class="con-k" data-i18n="c_total_calls">累计外部调用</span><span class="con-v" id="s-total-calls">--</span></div>
+      <div class="con-card"><span class="con-k" data-i18n="c_today_ips">今日活跃 IP</span><span class="con-v" id="s-today-ips">--</span></div>
+      <div class="con-card"><span class="con-k" data-i18n="c_cache">D1 缓存条目</span><span class="con-v" id="s-cache">--</span></div>
+      <div class="con-card"><span class="con-k" data-i18n="c_today_reports">今日上报纠错</span><span class="con-v" id="s-today-reports">--</span></div>
+      <div class="con-card"><span class="con-k" data-i18n="c_total_reports">累计上报纠错</span><span class="con-v" id="s-total-reports">--</span></div>
+    </div>
+
+    <!-- 近 7 日趋势 -->
+    <div class="doc-sec">
+      <h2 data-i18n="c_sec_trend">近 7 日外部调用趋势</h2>
+      <div class="trend-bars" id="trend-bars"><span class="con-empty" data-i18n="c_empty">暂无数据</span></div>
+    </div>
+
+    <!-- 调用目的地 -->
+    <div class="doc-sec">
+      <h2 data-i18n="c_sec_dest">API 调用目的地 TOP</h2>
+      <div class="con-cols">
+        <div class="con-col">
+          <h3 data-i18n="c_dest_ref">按 Referer 域名</h3>
+          <table class="doc-tbl" id="dest-referer"></table>
+        </div>
+        <div class="con-col">
+          <h3 data-i18n="c_dest_country">按地域</h3>
+          <table class="doc-tbl" id="dest-country"></table>
+        </div>
+        <div class="con-col">
+          <h3 data-i18n="c_dest_ua">按 User-Agent</h3>
+          <table class="doc-tbl" id="dest-ua"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 物质查询统计 -->
+    <div class="doc-sec">
+      <h2 data-i18n="c_sec_formula">物质查询统计</h2>
+      <p class="con-sub" data-i18n="c_formula_sub">最近被联网判定并缓存的化学式（本地知识库命中不缓存）：</p>
+      <table class="doc-tbl" id="formula-top"></table>
+    </div>
+
+    <!-- 上报纠错统计 -->
+    <div class="doc-sec">
+      <h2 data-i18n="c_sec_reports">上报纠错统计</h2>
+      <table class="doc-tbl" id="report-top"></table>
+    </div>
+
+    <!-- API 配置 -->
+    <div class="doc-sec">
+      <h2 data-i18n="c_sec_config">API 配置管理</h2>
+      <table class="doc-tbl" id="config-table"></table>
+      <div class="doc-hint" data-i18n="c_config_hint">限流参数与密码均在部署配置中管理：上限在 <code class="ep">chem-cache.js</code> 的 <code class="ep">API_DAILY_LIMIT</code>，密码在 <code class="ep">CONSOLE_PASSWORD</code> secret。</div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span data-i18n="c_footer">化学式速查 · 站长控制台 · 仅限授权访问</span>
+  </footer>
+</main>
+
+<script>
+(function(){
+  var doc = document.documentElement;
+  var savedLang = localStorage.getItem("chem_lang") || "cn";
+  var savedTheme = localStorage.getItem("chem_theme") || "light";
+  doc.setAttribute("data-theme", savedTheme);
+  doc.setAttribute("data-lang", savedLang);
+  doc.lang = savedLang==="cn" ? "zh-CN" : "en";
+  window.__LANG = savedLang;
+  applyLangVisual();
+
+  var I18N = {
+    cn: {
+      brand:"化学式速查", c_logout:"退出登录 →", c_back:"返回首页 →",
+      c_eyebrow:"OWNER ONLY · 站长专用", c_login_title:"控制台登录",
+      c_login_lede:"输入控制台密码以查看统计数据与 API 配置。",
+      c_password:"密码", c_login_btn:"登录", c_login_err:"密码错误，请重试。", c_login_fail:"登录失败：",
+      c_eyebrow2:"STATION OVERVIEW · 运行总览", c_title:"控制台",
+      c_today_calls:"今日外部调用", c_total_calls:"累计外部调用", c_today_ips:"今日活跃 IP",
+      c_cache:"D1 缓存条目", c_today_reports:"今日上报纠错", c_total_reports:"累计上报纠错",
+      c_sec_trend:"近 7 日外部调用趋势", c_empty:"暂无数据",
+      c_sec_dest:"API 调用目的地 TOP", c_dest_ref:"按 Referer 域名", c_dest_country:"按地域", c_dest_ua:"按 User-Agent",
+      c_sec_formula:"物质查询统计", c_formula_sub:"最近被联网判定并缓存的化学式（本地知识库命中不缓存）：",
+      c_sec_reports:"上报纠错统计",
+      c_sec_config:"API 配置管理",
+      c_config_hint:"限流参数与密码均在部署配置中管理：上限在 <code class=\"ep\">chem-cache.js</code> 的 <code class=\"ep\">API_DAILY_LIMIT</code>，密码在 <code class=\"ep\">CONSOLE_PASSWORD</code> secret。",
+      c_footer:"化学式速查 · 站长控制台 · 仅限授权访问",
+      th_formula:"化学式", th_name:"名称", th_source:"来源", th_updated:"最近更新",
+      th_dest:"目的地", th_count:"次数",
+      th_item:"配置项", th_value:"当前值",
+      cfg_limit:"每日每 IP 上限", cfg_limit_val:"次", cfg_pw:"控制台密码", cfg_pw_yes:"已配置", cfg_pw_no:"未配置",
+      err_unauthed:"登录已失效，请重新登录。"
+    },
+    en: {
+      brand:"Chemical Quick-Check", c_logout:"Log out →", c_back:"← Back home",
+      c_eyebrow:"OWNER ONLY", c_login_title:"Console Login",
+      c_login_lede:"Enter the console password to view stats and API configuration.",
+      c_password:"Password", c_login_btn:"Sign in", c_login_err:"Wrong password. Try again.", c_login_fail:"Login failed: ",
+      c_eyebrow2:"STATION OVERVIEW", c_title:"Console",
+      c_today_calls:"External calls today", c_total_calls:"Total external calls", c_today_ips:"Active IPs today",
+      c_cache:"D1 cache entries", c_today_reports:"Reports today", c_total_reports:"Total reports",
+      c_sec_trend:"External calls — last 7 days", c_empty:"No data yet",
+      c_sec_dest:"API call destinations TOP", c_dest_ref:"By Referer domain", c_dest_country:"By country", c_dest_ua:"By User-Agent",
+      c_sec_formula:"Substance query stats", c_formula_sub:"Most recently deep-checked and cached formulas (local knowledge-base hits are not cached):",
+      c_sec_reports:"Report / correction stats",
+      c_sec_config:"API Configuration",
+      c_config_hint:"Rate limit and password are managed in deployment config: the limit lives in <code class=\"ep\">API_DAILY_LIMIT</code> in <code class=\"ep\">chem-cache.js</code>, the password in the <code class=\"ep\">CONSOLE_PASSWORD</code> secret.",
+      c_footer:"Chemical Quick-Check · Owner console · Authorized access only",
+      th_formula:"Formula", th_name:"Name", th_source:"Source", th_updated:"Updated",
+      th_dest:"Destination", th_count:"Count",
+      th_item:"Setting", th_value:"Value",
+      cfg_limit:"Daily limit per IP", cfg_limit_val:"calls", cfg_pw:"Console password", cfg_pw_yes:"configured", cfg_pw_no:"not configured",
+      err_unauthed:"Session expired. Please sign in again."
+    }
+  };
+  function t(k){ var d = I18N[window.__LANG]; return d[k] != null ? d[k] : k; }
+  function applyI18n(){
+    document.querySelectorAll("[data-i18n]").forEach(function(el){
+      var k = el.getAttribute("data-i18n");
+      if(I18N[window.__LANG][k] != null) el.innerHTML = I18N[window.__LANG][k];
+    });
+  }
+  function applyLangVisual(){
+    var on = window.__LANG==="cn";
+    var segs = document.querySelectorAll("#lang-toggle .seg span");
+    if(segs.length===2){ segs[0].classList.toggle("on", on); segs[1].classList.toggle("on", !on); }
+    var theme = document.documentElement.getAttribute("data-theme");
+    var tsegs = document.querySelectorAll("#theme-toggle .seg span");
+    if(tsegs.length===2){ tsegs[0].classList.toggle("on", theme==="light"); tsegs[1].classList.toggle("on", theme==="dark"); }
+  }
+  document.getElementById("lang-toggle").addEventListener("click", function(){
+    window.__LANG = window.__LANG==="cn" ? "en" : "cn";
+    localStorage.setItem("chem_lang", window.__LANG);
+    var d = document.documentElement;
+    d.setAttribute("data-lang", window.__LANG);
+    d.lang = window.__LANG==="cn" ? "zh-CN" : "en";
+    applyLangVisual(); applyI18n(); renderStatic();
+  });
+  document.getElementById("theme-toggle").addEventListener("click", function(){
+    var cur = document.documentElement.getAttribute("data-theme");
+    var next = cur==="dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("chem_theme", next);
+    applyLangVisual();
+  });
+  applyI18n();
+
+  // ---- 登录表单 ----
+  var loginView = document.getElementById("login-view");
+  var consoleView = document.getElementById("console-view");
+  var logoutBtn = document.getElementById("logout-btn");
+  var loginForm = document.getElementById("login-form");
+  var loginError = document.getElementById("login-error");
+
+  loginForm.addEventListener("submit", function(e){
+    e.preventDefault();
+    loginError.hidden = true;
+    var pw = document.getElementById("password").value;
+    fetch("/api/console/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw })
+    }).then(function(r){ return r.json().then(function(d){ return { status: r.status, d: d }; }); }).then(function(res){
+      if(res.status === 200){ showConsole(); } else {
+        loginError.textContent = t("c_login_err");
+        loginError.hidden = false;
+      }
+    }).catch(function(){
+      loginError.textContent = t("c_login_fail") + "network";
+      loginError.hidden = false;
+    });
+  });
+
+  logoutBtn.addEventListener("click", function(){
+    fetch("/api/console/logout", { method: "POST" }).then(function(){ showLogin(); });
+  });
+
+  function showConsole(){
+    loginView.hidden = true; consoleView.hidden = false; logoutBtn.hidden = false;
+    loadAll();
+  }
+  function showLogin(){
+    loginView.hidden = false; consoleView.hidden = true; logoutBtn.hidden = true;
+  }
+
+  function api(path){
+    return fetch(path).then(function(r){
+      return r.json().then(function(d){ return { status: r.status, d: d }; });
+    });
+  }
+  function checkAuth(res){
+    if(res.status === 401){ showLogin(); return false; }
+    return res.d && res.d.ok !== false;
+  }
+
+  // ---- 渲染 ----
+  function renderTable(id, headCells, rows){
+    var el = document.getElementById(id);
+    var h = "<thead><tr>" + headCells.map(function(c){ return "<th>"+c+"</th>"; }).join("") + "</tr></thead><tbody>";
+    if(!rows || !rows.length){ h += "<tr><td colspan=\""+headCells.length+"\">"+t("c_empty")+"</td></tr>"; }
+    else { rows.forEach(function(r){ h += "<tr>"+r+"</tr>"; }); }
+    h += "</tbody>";
+    el.innerHTML = h;
+  }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function fmtTime(ts){
+    if(!ts) return "--";
+    var d = new Date(ts);
+    return d.toLocaleString(window.__LANG==="cn"?"zh-CN":"en-US", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+  }
+  function renderStatic(){
+    document.getElementById("login-error").hidden = true;
+  }
+
+  function loadAll(){
+    api("/api/console/stats/summary").then(function(res){
+      if(!checkAuth(res)) return;
+      var d = res.d;
+      document.getElementById("s-today-calls").textContent = String(d.todayCalls||0);
+      document.getElementById("s-total-calls").textContent = String(d.totalCalls||0);
+      document.getElementById("s-today-ips").textContent = String(d.todayIps||0);
+      document.getElementById("s-cache").textContent = String(d.cacheEntries||0);
+      document.getElementById("s-today-reports").textContent = String(d.todayReports||0);
+      document.getElementById("s-total-reports").textContent = String(d.totalReports||0);
+    });
+    api("/api/console/stats/trend").then(function(res){
+      if(!checkAuth(res)) return;
+      var trend = res.d.trend || [];
+      var bars = document.getElementById("trend-bars");
+      if(!trend.length){ bars.innerHTML = "<span class='con-empty'>"+t("c_empty")+"</span>"; return; }
+      var max = Math.max.apply(null, trend.map(function(x){ return x.count; })) || 1;
+      bars.innerHTML = "";
+      trend.forEach(function(x){
+        var el = document.createElement("div");
+        el.className = "trend-bar";
+        var h = Math.max(4, Math.round((x.count/max)*100));
+        el.innerHTML = "<span class='trend-bar-h' style='height:"+h+"%'></span><span class='trend-bar-l'>"+esc(x.date.slice(5))+"</span><span class='trend-bar-c'>"+x.count+"</span>";
+        bars.appendChild(el);
+      });
+    });
+    api("/api/console/stats/destinations").then(function(res){
+      if(!checkAuth(res)) return;
+      var d = res.d;
+      renderTable("dest-referer", [t("th_dest"), t("th_count")], (d.referer||[]).map(function(x){ return "<td>"+esc(x.name)+"</td><td>"+x.count+"</td>"; }));
+      renderTable("dest-country", [t("th_dest"), t("th_count")], (d.country||[]).map(function(x){ return "<td>"+esc(x.name)+"</td><td>"+x.count+"</td>"; }));
+      renderTable("dest-ua", [t("th_dest"), t("th_count")], (d.ua||[]).map(function(x){ return "<td>"+esc(x.name)+"</td><td>"+x.count+"</td>"; }));
+    });
+    api("/api/console/stats/formulas").then(function(res){
+      if(!checkAuth(res)) return;
+      var d = res.d;
+      renderTable("formula-top", [t("th_formula"), t("th_name"), t("th_source"), t("th_updated")],
+        (d.top||[]).map(function(x){ return "<td><code>"+esc(x.formula)+"</code></td><td>"+esc(x.name||"")+"</td><td>"+esc(x.source||"")+"</td><td>"+fmtTime(x.updatedAt)+"</td>"; }));
+    });
+    api("/api/console/stats/reports").then(function(res){
+      if(!checkAuth(res)) return;
+      var d = res.d;
+      renderTable("report-top", [t("th_formula"), t("th_count")],
+        (d.top||[]).map(function(x){ return "<td><code>"+esc(x.formula)+"</code></td><td>"+x.count+"</td>"; }));
+    });
+    api("/api/console/config").then(function(res){
+      if(!checkAuth(res)) return;
+      var d = res.d;
+      renderTable("config-table", [t("th_item"), t("th_value")], [
+        "<td>"+t("cfg_limit")+"</td><td>"+d.dailyLimit+" "+t("cfg_limit_val")+" / IP / 天</td>",
+        "<td>"+t("cfg_pw")+"</td><td>"+(d.passwordConfigured ? t("cfg_pw_yes") : t("cfg_pw_no"))+"</td>"
+      ]);
+    });
+  }
+
+  // 初始：探测会话
+  api("/api/console/session").then(function(res){
+    if(res.status === 200){ showConsole(); } else { showLogin(); }
+  });
+})();
+</script>
+</body>
+</html>

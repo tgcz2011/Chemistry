@@ -113,30 +113,25 @@ Cloudflare 的节点默认通过**中国大陆境外**（香港、日本、新�
 | 调用方式 | 是否需要 API key | 限流 |
 |---------|:---:|------|
 | **网页查询**（同源 Origin/Referer 匹配站点域名） | 否 | 不限 |
-| **外部 API 调用**（跨域，如 curl / 其他网站 / 后端服务） | **是** | **同一 IP 每日 50 次** |
+| **外部 API 调用**（跨域，如 curl / 其他网站 / 后端服务） | **否**（按 IP 自助额度） | **同一 IP 每日 50 次** |
 
 > **网页查询不计入限流**——在 `chem-check.zztool.dpdns.org` 页面上查询是免费无限的。
-> 只有从外部（curl、脚本、其他网站后端）调用 API 才需要 key 并受 50 次/天/IP 限制。
+> 外部调用**无需申请 key**：按调用来源 IP 自动计算额度，同一 IP 每日 50 次，随取随用。
+> 查看自己 IP 的今日剩余额度：访问 [额度查询页](/usage) 或 `GET /api/usage`。
 
-### 获取 API key
+### 获取 API key（已废止）
 
-API key 通过 Cloudflare Worker 环境变量 `API_KEYS` 配置（逗号分隔多个 key）：
+旧版需要 `API_KEYS` 环境变量手工配置静态 key；现在外部调用**不再需要 key**，按 IP 自助额度（50 次/天/IP）。历史 key 配置说明已移除，请求头 `Authorization: Bearer` / `X-Api-Key` 不再校验，跨域调用无需预检凭据。
 
-```bash
-# 设置 API key（在项目根目录执行，可设多个逗号分隔）
-wrangler secret put API_KEYS
-# 交互输入：my-key-abc123,another-key-456
-```
+### 站长控制台
 
-外部调用时在请求头携带 API key（推荐）：
+访问 `/console`（需 `CONSOLE_PASSWORD` 密码登录），统一查看：
+- **运行总览**：今日/累计外部调用、活跃 IP、D1 缓存条目、上报纠错数
+- **近 7 日调用趋势** 与 **调用目的地 TOP**（按 Referer 域名 / 地域 / User-Agent 聚合）
+- **物质查询统计**（最近被联网判定并缓存的化学式）与 **上报纠错 TOP**
+- **API 配置管理**：当前限流参数与控制台密码状态
 
-```bash
-curl -H "Authorization: Bearer <你的key>" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4"
-# 或用 X-Api-Key 头：
-curl -H "X-Api-Key: <你的key>" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4"
-```
-
-> 出于安全考虑 key **不**放在 URL 查询串中（避免被代理/日志/浏览器历史泄露）。`?key=` 查询串仅作旧版本兼容兜底，新代码请一律用请求头。跨域调用须先发 `OPTIONS` 预检，Worker 已返回 204 并允许 `Authorization`/`X-Api-Key` 头。
+> 控制台会话为签名 cookie（7 天有效），凭据不经过 URL。`CONSOLE_PASSWORD` 通过 `wrangler secret put CONSOLE_PASSWORD` 配置，未配置时登录接口返回 500 提示。
 
 ### 接口列表
 
@@ -145,6 +140,7 @@ curl -H "X-Api-Key: <你的key>" "https://chem-check.zztool.dpdns.org/api/check?
 | `GET /api/check?formula=X[&deep=1]` | 物质存在性判定（`deep=1` 触发联网兜底链） |
 | `GET /api/report?formula=X[&did=Y]` | 上报信息有误，强制联网重查并更新缓存 |
 | `GET /api/equation?input=..&condition=..` | 方程式配平 / 补全 / 化学计量 |
+| `GET /api/usage` | 当前 IP 额度查询（今日已用/剩余/上限/重置时间，无需 key） |
 | `GET /api/health` | 健康检查（无需 key） |
 
 ### 统一响应结构
@@ -214,34 +210,30 @@ curl -H "X-Api-Key: <你的key>" "https://chem-check.zztool.dpdns.org/api/check?
 **网页查询（同源，无需 key，无限）**：
 直接在 `https://chem-check.zztool.dpdns.org` 页面输入化学式即可。
 
-**外部 API 调用（需 key，50 次/天/IP）**：
+**外部 API 调用（按 IP 自助额度，50 次/天/IP，无需 key）**：
 
 ```bash
 # 物质判定（含深度联网）
-curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&deep=1"
+curl "https://chem-check.zztool.dpdns.org/api/check?formula=CuSO4&deep=1"
 
 # 方程式配平
-curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2"
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=KMnO4%2BHCl%3DKCl%2BMnCl2%2BH2O%2BCl2"
 
 # 仅给反应物，AI 补全产物
-curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH"
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=HCl%2BNaOH"
 # → { "equation":"HCl + NaOH → NaCl + H₂O", "mode":"completion", "type":"酸碱中和" }
 
 # 双水解反应（本地规则自动识别）
-curl -H "Authorization: Bearer my-key-abc123" "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
+curl "https://chem-check.zztool.dpdns.org/api/equation?input=AlCl3%2BNa2CO3"
 # → { "equation":"2AlCl₃ + 3Na₂CO₃ + 3H₂O → 2Al(OH)₃↓ + 3CO₂↑ + 6NaCl", "type":"双水解" }
+
+# 查看当前 IP 剩余额度
+curl "https://chem-check.zztool.dpdns.org/api/usage"
 ```
 
-**无 key 或 key 无效时的响应**：
+**超限（429）响应**：
 
 ```json
-// 401（缺少 key）
-{ "ok": false, "error": "外部 API 调用需要 API key。请在请求头 Authorization: Bearer <你的key> 中携带（或 X-Api-Key 头）。生成方式见 README「API 调用教程」。" }
-
-// 403（key 无效）
-{ "ok": false, "error": "API key 无效。" }
-
-// 429（超限）
 { "ok": false, "error": "今日 API 调用已达上限（50 次/IP/天），请明日再试。", "limit": { "used": 50, "limit": 50 } }
 ```
 

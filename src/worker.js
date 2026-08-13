@@ -14,7 +14,7 @@
 import { analyze, prettyFormula, detectRadical } from "../public/chem-engine.js";
 import { balanceEquation, parseEquation, molarMass, prettyEquation, compositionMassPct } from "../public/chem-calc.js";
 import { searchPubChem, pubchemChineseName, searchWiki, searchWikiByName } from "./chem-sources.js";
-import { getCached, setCached, checkAndIncrReport, checkAndIncrApi, getEqCached, setEqCached } from "./chem-cache.js";
+import { getCached, setCached, checkAndIncrReport, checkAndIncrApi, getEqCached, setEqCached, pruneApiLog, sumApiUsage, trendApiLog, destTopApi, formulaTopCache, reportTop, API_DAILY_LIMIT } from "./chem-cache.js";
 import { localCompleteReaction, lookupDosage, annotateStates, isReversible } from "./chem-reactions.js";
 
 const AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
@@ -33,7 +33,45 @@ export default {
         // 健康检查属公开信息；跨域浏览器读取不开放，curl/监控可直接访问
         return applyCors(json({ ok: true, service: "chem-check", ai: !!env.AI, db: !!env.DB, time: Date.now() }), request, url, false);
       }
-      // 业务 API：网页同源查询免费无限；外部跨域调用需 API key 且按 IP 限 50/天
+      // 公开额度查询：返回当前 IP 的今日已用/剩余/上限/重置时间
+      if (path === "/api/usage") {
+        const usage = await apiUsageFor(request, env);
+        return applyCors(json({ ok: true, ...usage }), request, url, false);
+      }
+      // 站长控制台：登录/登出/会话 + 统计接口（受会话保护）
+      if (path === "/api/console/login") {
+        return handleConsoleLogin(request, env);
+      }
+      if (path.startsWith("/api/console/")) {
+        const check = await requireConsoleAuth(request, env);
+        if (check !== true) return check;
+        if (path === "/api/console/logout") {
+          return handleConsoleLogout();
+        }
+        if (path === "/api/console/session") {
+          return json({ ok: true, loggedIn: true });
+        }
+        if (path === "/api/console/stats/summary") {
+          return json({ ok: true, ...await consoleSummary(env) });
+        }
+        if (path === "/api/console/stats/trend") {
+          return json({ ok: true, trend: await trendApiLog(env, 7) });
+        }
+        if (path === "/api/console/stats/destinations") {
+          return json({ ok: true, ...await destTopApi(env, 10) });
+        }
+        if (path === "/api/console/stats/formulas") {
+          return json({ ok: true, ...await formulaTopCache(env, 10) });
+        }
+        if (path === "/api/console/stats/reports") {
+          return json({ ok: true, ...await reportTop(env, 10) });
+        }
+        if (path === "/api/console/config") {
+          return json({ ok: true, dailyLimit: API_DAILY_LIMIT, passwordConfigured: !!env.CONSOLE_PASSWORD });
+        }
+        return json({ ok: false, error: "未知控制台接口" }, 404);
+      }
+      // 业务 API：网页同源查询免费无限；外部跨域调用按 IP 限 50/天（无需 key）
       const isApiPath = path.startsWith("/api/check") || path.startsWith("/api/report") || path.startsWith("/api/equation");
       let authorized = false;
       if (isApiPath) {
@@ -621,8 +659,8 @@ function handlePreflight(request) {
 }
 
 // ---------------------------------------------------------------------------
-// API 网关：同源网页查询免费无限；外部跨域调用需 API key 且按 IP 限 50/天
-// key 从 Authorization: Bearer <key> 或 X-Api-Key 头读取（不再建议放 URL 查询串）
+// API 网关：同源网页查询免费无限；外部跨域调用按 IP 每日 50 次（无需 API key）
+// 说明：key 机制已废止（原 Authorization: Bearer / X-Api-Key / ?key= 均不再校验）。
 // ---------------------------------------------------------------------------
 function sameOrigin(request, url) {
   const origin = request.headers.get("Origin") || "";
@@ -637,33 +675,26 @@ function sameOrigin(request, url) {
   return false;
 }
 
-function extractApiKey(request, url) {
-  const auth = request.headers.get("Authorization") || "";
-  const m = auth.match(/^\s*Bearer\s+(.+)$/i);
-  if (m) return m[1].trim();
-  const xk = request.headers.get("X-Api-Key") || "";
-  if (xk.trim()) return xk.trim();
-  return (url.searchParams.get("key") || "").trim();
+function clientIP(request) {
+  return request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0].trim() || "unknown";
+}
+
+function callMeta(request) {
+  const referer = request.headers.get("Referer") || "";
+  let refererDomain = "";
+  if (referer) {
+    try { refererDomain = new URL(referer).host; } catch { refererDomain = referer; }
+  }
+  const ua = (request.headers.get("User-Agent") || "").slice(0, 120);
+  return { referer: refererDomain || null, country: request.headers.get("CF-IPCountry") || null, ua: ua || null };
 }
 
 async function apiGate(request, env, url) {
-  // 1) 同源（网页查询）→ 放行，不计限流
+  // 1) 同源（网页查询）→ 放行，不计限流、不写明细
   if (sameOrigin(request, url)) return { denied: false };
-  // 2) 外部跨域调用 → 必须带有效 API key
-  const key = extractApiKey(request, url);
-  if (!key) {
-    return {
-      denied: true,
-      resp: applyCors(json({ ok: false, error: "外部 API 调用需要 API key。请在请求头 Authorization: Bearer <你的key> 中携带（或 X-Api-Key 头）。生成方式见 README「API 调用教程」。" }, 401), request, url, false)
-    };
-  }
-  const validKeys = (env.API_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
-  if (!validKeys.length || !validKeys.includes(key)) {
-    return { denied: true, resp: applyCors(json({ ok: false, error: "API key 无效。" }, 403), request, url, true) };
-  }
-  // 3) 按 IP 限流 50/天
-  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
-  const limit = await checkAndIncrApi(env, ip);
+  // 2) 外部跨域调用 → 按 IP 限流 50/天；放行时记录调用明细
+  const ip = clientIP(request);
+  const limit = await checkAndIncrApi(env, ip, callMeta(request));
   if (!limit.allowed) {
     return {
       denied: true,
@@ -676,6 +707,126 @@ async function apiGate(request, env, url) {
     };
   }
   return { denied: false, authorized: true, limit };
+}
+
+// 公开额度查询：同源/外部均可用，仅读不改
+async function apiUsageFor(request, env) {
+  const ip = clientIP(request);
+  const limit = API_DAILY_LIMIT;
+  let used = 0;
+  if (env?.DB && ip && ip !== "unknown") {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const row = await env.DB.prepare("SELECT count FROM api_usage WHERE ip=? AND usage_date=?").bind(ip, today).first();
+      used = Number(row?.count) || 0;
+    } catch { /* 查询失败按 0 处理 */ }
+  }
+  return { ip, used, limit, remaining: Math.max(0, limit - used), reset: Math.floor(Date.now() / 1000) + 86400 };
+}
+
+// ---------------------------------------------------------------------------
+// 站长控制台会话：无状态签名 cookie（HMAC-SHA256，密钥 = CONSOLE_PASSWORD）
+// token = base64url(payload) + "." + base64url(hmac)；payload = {iat, exp}
+// ---------------------------------------------------------------------------
+const CONSOLE_COOKIE = "chem_console";
+const CONSOLE_TTL_MS = 7 * 24 * 3600 * 1000; // 7 天
+
+function b64urlEncode(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecode(s) {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+async function hmacSign(secret, msg) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return b64urlEncode(new Uint8Array(sig));
+}
+async function signToken(secret) {
+  const now = Date.now();
+  const payload = { iat: Math.floor(now / 1000), exp: Math.floor((now + CONSOLE_TTL_MS) / 1000) };
+  const msg = JSON.stringify(payload);
+  const sig = await hmacSign(secret, msg);
+  return b64urlEncode(new TextEncoder().encode(msg)) + "." + sig;
+}
+async function verifyToken(secret, token) {
+  if (!token) return null;
+  const dot = token.indexOf(".");
+  if (dot < 0) return null;
+  const msgB64 = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  let msg;
+  try { msg = new TextDecoder().decode(b64urlDecode(msgB64)); } catch { return null; }
+  const expect = await hmacSign(secret, msg);
+  if (expect !== sig) return null;
+  try {
+    const payload = JSON.parse(msg);
+    if (payload.exp && Math.floor(Date.now() / 1000) >= payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function cookieFromRequest(request, name) {
+  const h = request.headers.get("Cookie") || "";
+  for (const part of h.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+ }
+
+async function handleConsoleLogin(request, env) {
+  if (!env.CONSOLE_PASSWORD) {
+    return json({ ok: false, error: "控制台未配置密码。请在部署时设置 CONSOLE_PASSWORD secret。" }, 500);
+  }
+  let body = {};
+  try { body = await request.json(); } catch { /* ignore */ }
+  const password = String(body.password || "");
+  if (!password || password !== env.CONSOLE_PASSWORD) {
+    return json({ ok: false, error: "密码错误。" }, 401);
+  }
+  const token = await signToken(env.CONSOLE_PASSWORD);
+  const resp = json({ ok: true, loggedIn: true });
+  resp.headers.append("Set-Cookie",
+    `${CONSOLE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${CONSOLE_TTL_MS / 1000}`);
+  return resp;
+}
+
+function handleConsoleLogout() {
+  const resp = json({ ok: true });
+  resp.headers.append("Set-Cookie", `${CONSOLE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  return resp;
+}
+
+async function requireConsoleAuth(request, env) {
+  if (!env.CONSOLE_PASSWORD) return json({ ok: false, error: "控制台未配置密码。" }, 500);
+  const token = cookieFromRequest(request, CONSOLE_COOKIE);
+  const payload = await verifyToken(env.CONSOLE_PASSWORD, token);
+  if (!payload) return json({ ok: false, error: "未登录或会话已过期。" }, 401);
+  return true;
+}
+
+async function consoleSummary(env) {
+  const usage = await sumApiUsage(env);
+  const fc = await formulaTopCache(env, 1);
+  const rp = await reportTop(env, 1);
+  // 异步清理过期明细（不阻塞响应）
+  if (env?.DB) { try { await pruneApiLog(env, 30); } catch { /* ignore */ } }
+  return {
+    todayCalls: usage.today,
+    totalCalls: usage.total,
+    todayIps: usage.todayIps,
+    cacheEntries: fc.total,
+    todayReports: rp.today,
+    totalReports: rp.total
+  };
 }
 
 // ---------------------------------------------------------------------------
