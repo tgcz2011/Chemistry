@@ -62,6 +62,12 @@
 | 23 | **电极电势** | 按情形（酸性/碱性/中性/非水/固态）给出半电池反应、E° 与能斯特方程；本地 ELECTRODE 表约 210 种 + AI 兜底 | `electrode` 字段 |
 | 24 | **API 调用文档页** | 首页右上角「API ↗」跳转 `public/docs/api.html`（规范路径 `/docs/api`），双语文档：访问方式/限流、获取 key、接口列表、统一响应结构与字段说明、curl 示例、401/403/429 响应；独立内联脚本复用 `chem_lang`/`chem_theme` | `/docs/api` |
 | 25 | **纯 IP 额度 + 站长控制台** | 外部 API 调用废止静态 key，改为按 IP 自助额度（50 次/天/IP）；公开额度页 `/usage`（含 `GET /api/usage` 接口）；站长控制台 `/console`（`CONSOLE_PASSWORD` 签名 cookie 登录），含运行总览/近 7 日趋势/调用目的地 TOP（Referer·地域·UA）/物质查询统计/上报纠错统计/API 配置 | `/usage`、`/console`、`/api/usage`、`/api/console/*` |
+| 26 | **URL 状态 / 分享** | 判定结果同步到 URL（`?f=CuSO4`），方程式同步 `?e=...&cond=...`；支持分享/刷新/回退；结果区「复制链接」按钮（clipboard + 降级 execCommand）；初始化时读 URL 自动预填并判定 | `?f=` / `?e=` / 复制链接 |
+| 27 | **打印样式** | `@media print`：隐藏交互控件只留报告单，@page 边距、浅色强主题、分页保护 | 浏览器打印 |
+| 28 | **非标准式误判修复 + 引擎单测** | ruleCheck 新增过氧化物（O 取 -1）/超氧化物（O₂⁻）识别（修 H2OO→H2O2 矛盾 note）；mixedValenceCheck 排除 0 价组合（修 NaCl2 误判 yes）；新增 `public/chem-engine.test.mjs`（42 用例：解析/判定/颜色/电极/组成全覆盖） | `node public/chem-engine.test.mjs` |
+| 29 | **COLORS 颜色表补全** | 从 69 条补到 198 条，KNOWNS 全部物质有颜色数据（无显色离子标 null）；验收单测保证无缺失 | `colors` 字段 |
+| 30 | **字体自托管** | 移除全部 Google Fonts 外部引用，5 个 latin 子集 woff2 本地托管于 `public/fonts/`（可变字体 Fraunces/Sans 单文件覆盖多字重），`@font-face` + `font-display:swap`，国内首屏加速 | `/fonts/*.woff2` |
+| 31 | **AI 判定去保守** | prompt 明确禁止 uncertain/maybe 模糊词 + 判定指引（PubChem 证实或电荷平衡→yes）；代码兜底：非枚举 verdict 时 PubChem 证实→yes，否则 conditional | `aiJudgeOnce` |
 
 ---
 
@@ -85,11 +91,13 @@ chem-check/
 ├── public/                      # 前端（也是 Worker 的静态资源目录）
 │   ├── index.html               # 页面结构（检验报告单/SDS 风）
 │   ├── styles.css               # 样式（暖纸色+发丝线+颗粒噪点+章戳）
-│   ├── app.js                   # 前端逻辑：判定+配平计算+变体渲染+上报+电极电势渲染 (~480 行)
-│   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎+电极电势表 (ELECTRODE,~210 种)+酸根检测 (~3760 行，浏览器/Worker 共用)
-│   └── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量+元素质量分数 (~220 行，含118元素原子量)
+│   ├── app.js                   # 前端逻辑：判定+配平计算+变体渲染+上报+电极电势渲染 (~500 行)
+│   ├── chem-engine.js           # ★核心：化学式解析+存在性判定引擎+电极电势表 (ELECTRODE,~210 种)+酸根检测+颜色表 (COLORS,198 条) (~4200 行，浏览器/Worker 共用)
+│   ├── chem-calc.js             # ★核心：代数配平+摩尔质量+化学计量+元素质量分数 (~220 行，含118元素原子量)
+│   ├── chem-engine.test.mjs     # ★引擎单测（42 用例：解析/判定/颜色/电极/组成）
+│   └── fonts/                   # 自托管 woff2（Fraunces + IBM Plex Sans/Mono latin 子集）
 ├── src/                         # Worker 端
-│   ├── worker.js                # 路由 + fallback 链 + AI 提示词 + API 网关(限流/key/CORS) + 结构化返回 (~710 行)
+│   ├── worker.js                # 路由 + fallback 链 + AI 提示词 + API 网关(限流/key/CORS) + 结构化返回 (~880 行)
 │   ├── chem-sources.js          # PubChem / Wikipedia 客户端 (~145 行)
 │   ├── chem-cache.js            # D1 缓存(永不过期) + 上报限流 + API 限流 (~122 行)
 │   └── chem-reactions.js        # 本地无机反应补全 + 状态符号 + 可逆 + 剂量变体 + 双水解 (~257 行)
@@ -131,8 +139,11 @@ wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
 wrangler d1 execute chem-check-cache --remote --command "DELETE FROM formula_cache WHERE formula LIKE 'eq:%'"
 ```
 
-**测试纯逻辑（无需起 dev，绕开网络坑）**：反应引擎、配平、判定都是纯 ESM，可直接用 Node 测：
+**测试纯逻辑（无需起 dev，绕开网络坑）**：反应引擎、配平、判定、缓存都是纯 ESM，可直接用 Node 测：
 ```bash
+node public/chem-engine.test.mjs   # 引擎单测（42 用例：解析/判定/颜色/电极/组成）
+node src/chem-cache.test.mjs       # D1 限流+统计单测
+node src/console-auth.test.mjs     # 控制台会话签名单测
 node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteReaction(["CaCO3","H2SO4"])))'
 ```
 
@@ -178,6 +189,9 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 24. **Cloudflare 静态资源（ASSETS）会把 `foo.html` 规范化为无扩展名路径**：请求 `/api.html` 返回 307 → `/api`，请求 `/index.html` 返回 307 → `/`。→ 新增静态页面用**规范路径**（如 `public/docs/api.html` → `/docs/api`）直链，别链 `.html` 后缀（会多一次重定向）；也避免把文件命名成 `/api.html` 这类与 API 命名空间近似的名字。**新增静态页后务必用 curl 验证实际可访问**（走 ASSETS，本地 dev 也能测）。
 25. **本地 D1 新增表后必须跑迁移，否则 batch 静默失败**：`checkAndIncrApi` 里计数（api_usage）与明细（api_call_log）用 `env.DB.batch` 同批写入；若新表未迁移，batch 抛错被 catch 吞掉，表现为"调用放行了但计数不涨"（`/api/usage` 恒为 0）且无任何报错。→ 新增迁移文件后执行 `npx wrangler d1 migrations apply <dbname> --local` 再测。
 26. **`applyCors` 的 `authorized` 语义与 key 机制解耦**：废止 key 后，"放行的外部调用"仍要回显来源 Origin（浏览器可读），同源调用不需要 CORS 头。改 apiGate 时保持 `{denied:false, authorized:true}` 对放行的外部调用返回，否则跨域浏览器读不到响应。
+27. **`mixedValenceCheck` 曾把 0 价当作合法混合价组合**：导致 `NaCl2` 被解释成"1 个 Cl 取 -1、1 个取 0"而误判存在。→ 混合价必须排除 0 价（0 价是单质态，化合物中原子不应呈游离态）。改后回归 Fe3O4/Mn3O4/Pb3O4/Co3O4 等不受影响。
+28. **ruleCheck 把 O 当固定 -2 导致过氧化物误报"电荷不平衡"**：`H2O2`/`H2OO`（=H2O2 非标写法）知识库命中 yes，但 ruleNote 却输出"净电荷 -2 无法平衡"的矛盾信息。→ 全固定氧化态分支加过氧化物（k 个 O 取 -1，`k=-fixedSum`）与超氧化物（O₂⁻ 单元）特判，note 与 verdict 一致。
+29. **Google Fonts CSS2 对可变字体按子集返回单文件**：`Fraunces:opsz,wght@...500;600;700` 与 `IBM Plex Sans:400;500;600` 的 latin 子集都是**同一个 woff2**（可变字体，单文件含全部字重）。→ 自托管时只需下 1 个 Fraunces + 1 个 IBM Plex Sans + 3 个 Mono 字重文件，`@font-face` 里写 `font-weight:500 700` / `400 600` 范围即可，别按字重各下一个（会拿到重复文件）。
 
 ---
 
@@ -221,13 +235,10 @@ node -e 'import("./src/chem-reactions.js").then(m=>console.log(m.localCompleteRe
 - ✅ 生产实测：`AgOH`(知识库)、`CaCl2`(PubChem)、`K2FeO4`(PubChem+AI/高铁酸钾)、`Na2FeO4`(纯AI/高铁酸钠)、`CaCO3+H2SO4`(复分解+CO2↑)、`N2+H2⇌NH3`(可逆)、`AlCl3+Na2CO3`(双水解→2Al(OH)₃↓+3CO₂↑+6NaCl)、限流第4次被拦截，全部正确。
 
 **已知的待改进/小瑕疵**：
-- ⚠️ AI 对个别物质会"过度保守"判 uncertain（如 `XeF2`，模型能力所限，可接受）。
-- ⚠️ 前端 Google Fonts 国内加载慢，未做镜像/自托管。
+- ⚠️ AI 对个别物质会"过度保守"判 uncertain（如 `XeF2`，模型能力所限，可接受；已加 prompt 约束降低概率）。
 - ⚠️ 本地 `wrangler dev` 因 remote AI 起不来（见坑 #9），暂靠 Node 直测 + 线上验证。
-- ⚠️ 语言切换后方程式结果区不自动重渲染（仅判定结果会重渲染），需重新点配平按钮。
 - ⚠️ wrangler OAuth token 已过期（见坑 #21），需 `wrangler login` 或设 `CLOUDFLARE_API_TOKEN` 后重新部署。
-- ⚠️ `H2OO` 等个别非标准式仍判 yes（ruleNote 提示电荷不平衡但 verdict 未降级）——既有行为，暂不处理。
-- ⚠️ COLORS 颜色表仅 69 种，未覆盖全部 198 条 KNOWNS；缺颜色的条目前端该栏目为空（不影响判定）。
+- ✅ 已修复（2026-08-14）：语言切换后方程式结果区不重渲染（toggleLang 重渲染 lastEq）；`H2OO`/`NaCl2` 非标准式误判（过氧化物识别 + 混合价排除 0 价）；COLORS 缺色（69→198 全补齐）；Google Fonts 国内加载慢（自托管 woff2）；无 URL 分享（?f=/?e= + 复制链接）；不可打印（@media print）；chem-engine 无单测（42 用例）。
 
 ---
 

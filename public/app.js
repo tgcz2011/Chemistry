@@ -2,7 +2,7 @@
 // 判定：本地知识库/规则即时判定，未收录自动调用 Workers AI 深度判定
 // 配平·计算：调用 /api/equation，展示配平方程式、摩尔质量，并提供化学计量计算器
 import { analyze, prettyFormula, verdictText, TEMPLATES } from "/chem-engine.js";
-import { compositionMassPct } from "/chem-calc.js";
+import { compositionMassPct, molarMass } from "/chem-calc.js";
 
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
@@ -31,6 +31,7 @@ const I18N = {
     loading_deep:"联网深度判定中（PubChem / 维基 / AI）…",
     loading_eq:"正在配平 / 调用云端…",
     report_btn:"结果有误？上报并联网刷新",
+    share_btn:"复制链接",
     calc_title:"化学计量计算", calc_species:"物质", calc_coeff:"系数",
     calc_amount:"物质的量", calc_mass:"质量", calc_name:"名称",
     eqtable_M:"M (g/mol)",
@@ -60,6 +61,7 @@ const I18N = {
     loading_deep:"Online deep lookup (PubChem / Wiki / AI)…",
     loading_eq:"Balancing / calling cloud…",
     report_btn:"Wrong result? Report & refresh online",
+    share_btn:"Copy link",
     calc_title:"Stoichiometry Calculator", calc_species:"Species", calc_coeff:"Coeff",
     calc_amount:"Amount (mol)", calc_mass:"Mass (g)", calc_name:"Name",
     eqtable_M:"M (g/mol)",
@@ -98,6 +100,7 @@ function toggleLang(){
   applyLang();
   // re-render current result if exists
   if(lastCheckResult) renderReport(lastCheckResult.data, lastCheckResult.raw, { deep:false, refined:lastCheckResult.refined });
+  if(lastEq) renderEquation(lastEq.data, lastEq.raw);
 }
 function toggleTheme(){
   const cur = document.documentElement.getAttribute("data-theme");
@@ -121,15 +124,12 @@ $("#theme-toggle").addEventListener("click", toggleTheme);
 let lastCheckResult = null;
 
 // ────────────────────────── 模式切换 ──────────────────────────
-$$(".mode").forEach(btn=>{
-  btn.addEventListener("click",()=>{
-    $$(".mode").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active");
-    const m = btn.dataset.mode;
-    $("#panel-check").classList.toggle("hidden", m!=="check");
-    $("#panel-eq").classList.toggle("hidden", m!=="eq");
-  });
-});
+function switchMode(m){
+  $$(".mode").forEach(b=>b.classList.toggle("active", b.dataset.mode===m));
+  $("#panel-check").classList.toggle("hidden", m!=="check");
+  $("#panel-eq").classList.toggle("hidden", m!=="eq");
+}
+$$(".mode").forEach(btn=>{ btn.addEventListener("click",()=>switchMode(btn.dataset.mode)); });
 
 // ────────────────────────── 判定模式 ──────────────────────────
 const input = $("#formula");
@@ -154,7 +154,27 @@ function insertTemplate(t){
     val=val.slice(0,s)+t.ins+val.slice(e);
     const caret=s+t.ins.length; input.value=val; input.focus(); input.setSelectionRange(caret,caret);
   }
-  updatePreview();
+updatePreview();
+
+// ────────────────────────── URL 参数初始化（?f= 判定 / ?e= 方程式）──────────────
+(function initFromUrl(){
+  try{
+    const p = new URLSearchParams(location.search);
+    const f = (p.get("f")||"").trim();
+    const e = (p.get("e")||"").trim();
+    if(e){
+      switchMode("eq");
+      eqInput.value = e;
+      condInput.value = p.get("cond") || "";
+      doEquation();
+    } else if(f){
+      switchMode("check");
+      input.value = f;
+      updatePreview();
+      doCheck();
+    }
+  }catch(err){}
+})();
 }
 input.addEventListener("input", updatePreview);
 input.addEventListener("keydown",(e)=>{ if(e.key==="Enter") doCheck(); });
@@ -162,20 +182,56 @@ $("#check").addEventListener("click", doCheck);
 $$("#panel-check .chip").forEach(c=>c.addEventListener("click",()=>{ input.value=c.dataset.f; updatePreview(); doCheck(); }));
 function updatePreview(){ const v=input.value.trim(); preview.textContent=v?prettyFormula(v):""; }
 
+// ────────────────────────── URL 状态同步 / 分享 ──────────────────────────
+// kind: "f"=判定公式 / "e"=方程式 / null=清空
+function syncUrl(kind, raw){
+  try{
+    const u = new URL(location.href);
+    if(kind==="f"){
+      u.searchParams.delete("e"); u.searchParams.delete("cond");
+      if(raw) u.searchParams.set("f", raw); else u.searchParams.delete("f");
+    } else if(kind==="e"){
+      u.searchParams.delete("f");
+      if(raw) u.searchParams.set("e", raw); else u.searchParams.delete("e");
+      if(condInput.value.trim()) u.searchParams.set("cond", condInput.value.trim());
+      else u.searchParams.delete("cond");
+    } else {
+      u.searchParams.delete("f"); u.searchParams.delete("e"); u.searchParams.delete("cond");
+    }
+    history.replaceState(null, "", u.pathname + u.search);
+  }catch(e){}
+}
+function copyLink(btn){
+  try{
+    const link = location.href;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(link);
+    } else {
+      const ta=document.createElement("textarea");
+      ta.value=link; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    if(btn){ const old=btn.textContent; btn.textContent = lang==="cn"?"已复制 ✓":"Copied ✓"; setTimeout(()=>{btn.textContent=old;},1500); }
+  }catch(e){}
+}
+
 let checkSeq = 0;
 async function doCheck(){
   const raw=input.value.trim();
-  if(!raw){ resultBox.innerHTML=""; lastCheckResult=null; return; }
+  if(!raw){ resultBox.innerHTML=""; lastCheckResult=null; syncUrl(null); return; }
   const seq = ++checkSeq;
   let local;
   try{ local = analyze(raw); }catch(e){ local=null; }
-  if(!local){ resultBox.innerHTML = errHtml(t("err_parse")); lastCheckResult=null; return; }
-  if(!local.ok){ resultBox.innerHTML = errHtml(local.error||t("err_parse")); lastCheckResult=null; return; }
+  if(!local){ resultBox.innerHTML = errHtml(t("err_parse")); lastCheckResult=null; syncUrl(null); return; }
+  if(!local.ok){ resultBox.innerHTML = errHtml(local.error||t("err_parse")); lastCheckResult=null; syncUrl(null); return; }
+  syncUrl("f", raw);
 
   // 未命中知识库 → 先渲染 waiting 状态，再联网查询
   const goingDeep = local.confidence!=="high";
   // 始终计算元素质量分数组成（无论是否命中知识库）
   local.composition = compositionMassPct(local.normalized) || undefined;
+  // 本地判定结果补摩尔质量（联网返回自带 mass）
+  if(local.mass == null) local.mass = molarMass(local.normalized);
   if(goingDeep){
     renderReport(local, raw, { deep:true, waiting:true });
   } else {
@@ -216,8 +272,9 @@ $$(".chip.eq").forEach(c=>c.addEventListener("click",()=>{ eqInput.value=c.datas
 let eqSeq=0;
 async function doEquation(){
   const raw=eqInput.value.trim();
-  if(!raw){ eqResult.innerHTML=""; return; }
+  if(!raw){ eqResult.innerHTML=""; syncUrl(null); return; }
   const seq=++eqSeq;
+  syncUrl("e", raw);
   eqResult.innerHTML = `<div class="loading">${t("loading_eq")}</div>`;
   try{
     const r=await fetch("/api/equation?input="+encodeURIComponent(raw)+"&condition="+encodeURIComponent(condInput.value.trim()));
@@ -327,7 +384,10 @@ function renderReport(res, raw, opts={}){
           <div class="rep-formula">${prettyFormula(res.normalized||raw)}</div>
           ${(!isNo && res.name)?`<div class="rep-name">${escapeHtml(bi(res.name))}</div>`:""}
         </div>
-        <div class="stamp ${stampCls}">${stampText}</div>
+        <div class="head-right">
+          <button class="chip share-btn" id="share-btn" title="${lang==="cn"?"复制当前结果链接":"Copy link to this result"}">${t("share_btn")}</button>
+          <div class="stamp ${stampCls}">${stampText}</div>
+        </div>
       </div>
       ${isNo?"":`<div class="meta">
         <span><b>${t("meta_composition")}</b> <span class="el">${elementsHtml||"—"}</span></span>
@@ -352,6 +412,8 @@ function renderReport(res, raw, opts={}){
   resultBox.querySelectorAll("button.rel").forEach(b=>b.addEventListener("click",()=>{ input.value=b.dataset.f; updatePreview(); doCheck(); }));
   const repBtn = resultBox.querySelector("#report-btn");
   if(repBtn) repBtn.addEventListener("click", ()=>doReport(raw, repBtn));
+  const shareBtn = resultBox.querySelector("#share-btn");
+  if(shareBtn) shareBtn.addEventListener("click", ()=>copyLink(shareBtn));
   resultBox.scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
@@ -359,6 +421,7 @@ function renderReport(res, raw, opts={}){
 let lastEq=null;
 function renderEquation(j, raw){
   if(!j || j.ok===false){ eqResult.innerHTML=errHtml(j&&j.error?j.error:"无法处理该方程式"); return; }
+  lastEq={ data:j, raw };
   lastEq=j;
   // 剂量相关：多个变体
   if(j.mode==="dosage" && Array.isArray(j.variants) && j.variants.length){

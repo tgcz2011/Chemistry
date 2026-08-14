@@ -280,7 +280,10 @@ async function aiJudgeOnce(env, c) {
     '  "electrode": [{"condition":{"cn":"条件（如 酸性/碱性/固态）","en":"condition (acidic/alkaline/solid etc.)"},"reaction":{"cn":"半电池反应式","en":"half-cell reaction"},"e0":{"cn":"标准电极电势 E°（含单位）","en":"standard electrode potential E° (with unit)"},"nernst":{"cn":"能斯特方程 E=f(浓度/分压)","en":"Nernst equation E=f(concentration/partial pressure)"},"detail":{"cn":"说明","en":"note"}}]\n' +
     "}\n\n" +
     "【字段规则】\n" +
-    "verdict：yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。\n" +
+    "verdict：必须四选一，只能输出 yes|conditional|unstable|no 其中之一，**禁止输出 uncertain、maybe、unknown、cannot determine 等模糊词**。" +
+    "yes=稳定存在；conditional=仅特定条件/亚稳存在；unstable=可生成但极不稳定易分解；no=通常不存在。\n" +
+    "verdict 判定指引：若 PubChem 已证实存在，或本地价态分析表明电荷可平衡且元素氧化态落在常见范围 → 判 yes；" +
+    "仅当有明确证据（如极端不稳定、需特殊条件维持）才判 conditional/unstable/no，不要因资料不足而判 uncertain。\n" +
     "name：中英文规范名。中文名按无机命名规则（如 某酸某/某化某/高某酸某），英文名用 IUPAC 惯用名（如 Copper sulfate）。\n" +
     "notes：2-4 条具体注意事项（稳定性/保存/毒性/反应性/制取），每条含中英文，一句完整。\n" +
     "tags：只能从 toxic|corrosive|explosive|oxidize|unstable|charged 中选，无关则给空数组 []。\n" +
@@ -371,7 +374,9 @@ async function aiJudgeOnce(env, c) {
 
   return {
     ok: true,
-    verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict) ? data.verdict : "conditional",
+    verdict: ["yes", "conditional", "unstable", "no"].includes(data.verdict)
+      ? data.verdict
+      : (c.pubchem ? "yes" : "conditional"),
     name: biStr(data.name),
     notes: (Array.isArray(data.notes) ? data.notes : []).map(x => {
       const n = biStr(x);

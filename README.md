@@ -13,6 +13,7 @@
 9. **酸根结构识别**：自动检测并标注常见含氧酸根（硫酸根/亚硫酸根/硝酸根/磷酸根/高锰酸根等 16 种）。
 10. **待核实状态**：未收录化学式在联网深度判定期间显示"待核实（WAITING）"章戳，联网完成后自动更新。
 11. **深色/浅色主题 + 中英双语**：一键切换明暗主题与中英文，偏好记忆到 localStorage。
+12. **URL 分享 / 打印**：判定结果同步到链接（`?f=CuSO4`，方程式 `?e=...&cond=...`），一键复制链接；报告单支持直接打印输出。
 
 - 判定采用**多级 fallback 链**（本地 → 缓存 → 联网权威源 → AI）：
 
@@ -288,10 +289,12 @@ wrangler d1 migrations apply chem-check-cache --local    # 本地 dev
 chem-check/
 ├── public/
 │   ├── index.html        # 网页界面（检验报告单/SDS 风）
-│   ├── styles.css        # 样式
-│   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报）
-│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 电极电势表 + 酸根检测（浏览器/Worker 共用）
-│   └── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
+│   ├── styles.css        # 样式（含自托管字体 @font-face 与打印样式）
+│   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报 + URL 分享）
+│   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 电极电势表 + 酸根检测 + 颜色表（浏览器/Worker 共用）
+│   ├── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
+│   ├── chem-engine.test.mjs  # 引擎单元测试（42 用例）
+│   └── fonts/            # 自托管 woff2（Fraunces + IBM Plex Sans/Mono，国内免翻字体加速）
 ├── src/
 │   ├── worker.js         # Worker：路由 + fallback 链 + AI 提示词 + API 网关(限流/key) + 结构化返回
 │   ├── chem-sources.js   # PubChem / Wikipedia 数据源客户端

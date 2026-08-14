@@ -2544,6 +2544,19 @@ function ruleCheck(parsed){
   if(variable.length===0){
     // 全部固定氧化态
     if(fixedSum===0) return {balanced:true,charged:false,note:"各元素氧化态固定且加和为零，符合电中性，按价键规则可能存在。"};
+    // 过氧化物特判：把 k 个 O 从 -2 提升为 -1（过氧键 -O-O-），使总和为零。
+    // 例：H2O2 / H2OO → 2 个 O 全取 -1，为过氧化氢。
+    if(Object.prototype.hasOwnProperty.call(els,"O")){
+      const countO = els.O;
+      const k = -fixedSum;
+      if(Number.isInteger(k) && k>0 && k<=countO){
+        return {balanced:true,charged:false,note:`按过氧化物解释（${k} 个 O 取 -1，形成过氧键 -O-O-）可满足电中性，可能为过氧化物。`};
+      }
+      // 超氧化物特判：O2⁻ 单元（2 个 O 平均 -1/2），如 KO2。
+      if(countO>=2 && countO%2===0 && fixedSum + countO*1.5 === 0){
+        return {balanced:true,charged:false,note:"按超氧化物解释（O₂⁻ 单元，O 平均 -1/2）可满足电中性，可能为超氧化物。"};
+      }
+    }
     return {balanced:false,charged:false,note:`按固定氧化态计算净电荷为 ${fixedSum}（≠0），电荷无法平衡，此类中性物质在通常条件下不可能存在。`};
   }
   if(variable.length===1){
@@ -2591,7 +2604,9 @@ function isHydrideH(els){
 function mixedValenceCheck(v, totalOx){
   const n=v.n;
   if(n<2) return null;
-  const os=v.os.filter(x=>Number.isInteger(x));
+  // 排除 0 价：0 价是单质态，化合物中不应有原子呈游离态（否则如 NaCl2 会被
+  // 解释成"1 个 Cl 取 -1、1 个取 0"而误判存在）
+  const os=v.os.filter(x=>Number.isInteger(x) && x!==0);
   for(const a of os){
     for(const b of os){
       if(a===b) continue;
@@ -3509,6 +3524,450 @@ export const COLORS = {
   ],
   "K2SO4":[
     {      "form":{        "cn":"固体/溶液",        "en":"solid/solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f6f6f2",      "ion":null}
+  ],
+  "AgOH":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（迅速脱水变棕）",        "en":"white (dehydrates to brown)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "AuOH":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"黄棕色",        "en":"yellowish brown"},      "hex":"#b08d2e",      "ion":null}
+  ],
+  "Au(OH)3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"黄棕色",        "en":"yellowish brown"},      "hex":"#b08d2e",      "ion":null}
+  ],
+  "Mn(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（空气氧化变棕）",        "en":"white (oxidizes brown in air)"},      "hex":"#eceae2",      "ion":null}
+  ],
+  "Co(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"粉红色",        "en":"pink"},      "hex":"#e8a8b0",      "ion":null}
+  ],
+  "Hg2(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（不稳定）",        "en":"white (unstable)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Pb(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Zn(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Al(OH)3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Sn(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Bi(OH)3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Mg(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Ca(OH)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaOH":[
+    {      "form":{        "cn":"固体/溶液",        "en":"solid/solution"},      "color":{        "cn":"白色 / 无色",        "en":"white / colorless"},      "hex":"#f3f1ea",      "ion":null}
+  ],
+  "KOH":[
+    {      "form":{        "cn":"固体/溶液",        "en":"solid/solution"},      "color":{        "cn":"白色 / 无色",        "en":"white / colorless"},      "hex":"#f3f1ea",      "ion":null}
+  ],
+  "NH4OH":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2CO3":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2SO3":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HClO":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"淡黄色",        "en":"pale yellow"},      "hex":"#f2efd8",      "ion":null}
+  ],
+  "HClO2":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HClO3":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HClO4":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2S2O3":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"无色（游离态不稳定）",        "en":"colorless (free acid unstable)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HNO2":[
+    {      "form":{        "cn":"溶液",        "en":"solution"},      "color":{        "cn":"淡蓝色",        "en":"pale blue"},      "hex":"#e8f0ee",      "ion":null}
+  ],
+  "BaO2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色或浅灰色",        "en":"white or light gray"},      "hex":"#efeee8",      "ion":null}
+  ],
+  "KO2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"橙黄色",        "en":"orange-yellow"},      "hex":"#e8a53a",      "ion":null}
+  ],
+  "NaClO":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Ca(ClO)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KClO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KClO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "BaCO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "HgCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Hg2Cl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "As2O3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "HgO":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"红色或黄色（视制法）",        "en":"red or yellow (method-dependent)"},      "hex":"#c8442e",      "ion":null}
+  ],
+  "N2O":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "SO2":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色（刺激性）",        "en":"colorless (pungent)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "SO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"无色（吸湿发烟）",        "en":"colorless (hygroscopic fuming)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2S":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色（臭鸡蛋味）",        "en":"colorless (rotten-egg smell)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2O":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2SO4":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色油状（浓）",        "en":"colorless oily (conc.)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HNO3":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色（浓的久置微黄）",        "en":"colorless (conc. yellows on standing)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HCl":[
+    {      "form":{        "cn":"气体/溶液",        "en":"gas/solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H3PO4":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色粘稠",        "en":"colorless viscous"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HF":[
+    {      "form":{        "cn":"气体/溶液",        "en":"gas/solution"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "Na2CO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaHCO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Ag2CO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"淡黄色",        "en":"pale yellow"},      "hex":"#f0e8b8",      "ion":null}
+  ],
+  "NH4Cl":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NH4NO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "(NH4)2CO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "(NH4)2SO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NH4HCO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "CaC2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"灰黑色",        "en":"grayish black"},      "hex":"#3a3a3a",      "ion":null}
+  ],
+  "CaSO4.2H2O":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（石膏）",        "en":"white (gypsum)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "SiO2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"无色/白色（石英砂）",        "en":"colorless/white (quartz)"},      "hex":"#f3f1ea",      "ion":null}
+  ],
+  "Al2O3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "CH4":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C2H6":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C2H4":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色（微甜）",        "en":"colorless (faint sweet)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C2H2":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C6H6":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色（苯）",        "en":"colorless (benzene)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C2H5OH":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "CH3COOH":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色（有酸味）",        "en":"colorless (vinegar-like)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "CH3OH":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "C12H22O11":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（蔗糖）",        "en":"white (sucrose)"},      "hex":"#f3f1ea",      "ion":null}
+  ],
+  "NaBr":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaI":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（久置微黄）",        "en":"white (yellows on standing)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KBr":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KI":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（久置微黄）",        "en":"white (yellows on standing)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "MgCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "MgSO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（泻盐）",        "en":"white (Epsom salt)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "CaCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "K2CO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2SO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2S":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（潮解微黄）",        "en":"white (yellowish when moist)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2S2O3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（硫代硫酸钠）",        "en":"white (sodium thiosulfate)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KNO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaNO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "(NH4)3PO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na3PO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "K3PO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2HPO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaH2PO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Ca(NO3)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Mg(NO3)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "AlCl3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Al2(SO4)3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "ZnCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "FeCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"浅绿色（无水淡黄）",        "en":"pale green (anhydrous yellowish)"},      "hex":"#cfe3c8",      "ion":null}
+  ],
+  "Cu(NO3)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"蓝色",        "en":"blue"},      "hex":"#2f7fe0",      "ion":{        "cn":"Cu²⁺",        "en":"Cu²⁺"}}
+  ],
+  "CuCl":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "MnCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"粉红色",        "en":"pink"},      "hex":"#e8a8b0",      "ion":null}
+  ],
+  "NiCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"绿色",        "en":"green"},      "hex":"#4f9e6b",      "ion":null}
+  ],
+  "CoSO4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"红色/粉红色",        "en":"red/pink"},      "hex":"#d8686e",      "ion":null}
+  ],
+  "Cr2(SO4)3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"紫色",        "en":"violet"},      "hex":"#7a5ca8",      "ion":null}
+  ],
+  "PbCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Pb(NO3)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Pb(Ac)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2O":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "K2O":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "MgO":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "ZnO":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Mn2O7":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"深绿色油状",        "en":"dark green oily"},      "hex":"#1f4f3a",      "ion":null}
+  ],
+  "Pb3O4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"红色（铅丹）",        "en":"red (minium)"},      "hex":"#c8442e",      "ion":null}
+  ],
+  "P2O5":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（吸湿）",        "en":"white (hygroscopic)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "N2O5":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "N2O3":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"深蓝色",        "en":"deep blue"},      "hex":"#274a7a",      "ion":null}
+  ],
+  "Cl2O7":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色油状",        "en":"colorless oily"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "Cl2O":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"黄棕色",        "en":"yellowish brown"},      "hex":"#b08d2e",      "ion":null}
+  ],
+  "HBr":[
+    {      "form":{        "cn":"气体/溶液",        "en":"gas/solution"},      "color":{        "cn":"无色（见光微黄）",        "en":"colorless (light-sensitive)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HI":[
+    {      "form":{        "cn":"气体/溶液",        "en":"gas/solution"},      "color":{        "cn":"无色（见光变棕紫）",        "en":"colorless (turns brownish on light)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H3BO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "H2SiO3":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "HCN":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色（剧毒）",        "en":"colorless (toxic)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "HSCN":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "O2":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "H2":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "N2":[
+    {      "form":{        "cn":"气体",        "en":"gas"},      "color":{        "cn":"无色",        "en":"colorless"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "P":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白磷白/红磷红",        "en":"white phosphorus / red phosphorus"},      "hex":"#c8c2b0",      "ion":null}
+  ],
+  "P4":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（白磷）",        "en":"white (white phosphorus)"},      "hex":"#dcd7c2",      "ion":null}
+  ],
+  "Na":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色（质软）",        "en":"silvery white (soft)"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "K":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色（质软）",        "en":"silvery white (soft)"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Ca":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Mg":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Al":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Zn":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白带蓝灰",        "en":"silvery white with bluish-gray tint"},      "hex":"#b8bcc2",      "ion":null}
+  ],
+  "Ag":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Au":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"金黄色",        "en":"golden yellow"},      "hex":"#d4a017",      "ion":null}
+  ],
+  "Hg":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Pt":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银灰色",        "en":"silvery gray"},      "hex":"#a8adb4",      "ion":null}
+  ],
+  "Sn":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"银白色",        "en":"silvery white"},      "hex":"#c7ccd1",      "ion":null}
+  ],
+  "Pb":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"蓝灰色",        "en":"bluish gray"},      "hex":"#8a8d94",      "ion":null}
+  ],
+  "C":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"石墨灰黑/金刚石无色",        "en":"graphite gray-black / diamond colorless"},      "hex":"#2a2a2a",      "ion":null}
+  ],
+  "Ca3(PO4)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Mg3(PO4)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "HgS":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"红色（朱砂）或黑色",        "en":"red (cinnabar) or black"},      "hex":"#c8442e",      "ion":null}
+  ],
+  "MnS":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"肉粉色",        "en":"flesh-pink"},      "hex":"#e2b8a8",      "ion":null}
+  ],
+  "NiS":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"黑色",        "en":"black"},      "hex":"#1a1a1a",      "ion":null}
+  ],
+  "CoS":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"黑色",        "en":"black"},      "hex":"#1a1a1a",      "ion":null}
+  ],
+  "SnCl2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "SnCl4":[
+    {      "form":{        "cn":"液体",        "en":"liquid"},      "color":{        "cn":"无色（发烟）",        "en":"colorless (fuming)"},      "hex":"#f7f6f2",      "ion":null}
+  ],
+  "As2O5":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "Na2B4O7":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（硼砂）",        "en":"white (borax)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "NaAlO2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色",        "en":"white"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "KAl(SO4)2":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"白色（明矾）",        "en":"white (alum)"},      "hex":"#f0efe9",      "ion":null}
+  ],
+  "K3[Fe(CN)6]":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"红色（赤血盐）",        "en":"red (red prussiate)"},      "hex":"#c8442e",      "ion":null}
+  ],
+  "K4[Fe(CN)6]":[
+    {      "form":{        "cn":"固体",        "en":"solid"},      "color":{        "cn":"黄色（黄血盐）",        "en":"yellow (yellow prussiate)"},      "hex":"#e8c53a",      "ion":null}
   ],
 };
 
