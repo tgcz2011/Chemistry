@@ -11,6 +11,7 @@ const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const I18N = {
   cn:{
     brand:"化学式速查",
+    nav_api:"API ↗", nav_usage:"额度", nav_console:"控制台",
     eyebrow:"存在性判定 · 方程式配平 · 化学计量",
     title:"这个化学式，<br/>到底存不存在？",
     lede:"输入任意化学式即刻判定——命中知识库即返，未收录的交由云端 AI 深度判定。还能给方程式配平、算摩尔质量与化学计量。比如氢氧化银，只在特定条件下存在，空气中很快脱水成氧化银。",
@@ -39,6 +40,7 @@ const I18N = {
   },
   en:{
     brand:"Formula Assay",
+    nav_api:"API ↗", nav_usage:"Usage", nav_console:"Console",
     eyebrow:"Existence · Balancing · Stoichiometry",
     title:"Does this formula<br/>really exist?",
     lede:"Type any chemical formula for instant judgment — knowledge-base hits return immediately, unknowns go to cloud AI for deep analysis. Also balances equations, computes molar mass and stoichiometry. e.g. AgOH only exists transiently, dehydrating to Ag₂O in air.",
