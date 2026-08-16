@@ -14,6 +14,7 @@
 10. **待核实状态**：未收录化学式在联网深度判定期间显示"待核实（WAITING）"章戳，联网完成后自动更新。
 11. **深色/浅色主题 + 中英双语**：一键切换明暗主题与中英文，偏好记忆到 localStorage。
 12. **URL 分享 / 打印**：判定结果同步到链接（`?f=CuSO4`，方程式 `?e=...&cond=...`），一键复制链接；报告单支持直接打印输出。
+ 13. **结构式渲染（OpenChemLib）**：判定结果直接画出结构式——本地内置分子辞典（覆盖 180+ 种常见物质），输入如 `CuSO4`、`C2H6O`、`CaCO3` 即出键线结构图；**同一分子式存在同分异构体时全部画出**（如 `C2H6O` → 乙醇 + 二甲醚）；**纯离子化合物**（如 `NaCl`、`AgOH`）因无独立分子结构，改为显示"离子组成"卡（`Na⁺ · Cl⁻`）；渲染库为离线自托管的 OpenChemLib（工业级化学库，解决旧 smiles-drawer 对含氧酸布局失效的问题），键线配色随明暗主题自动切换。
 
 - 判定采用**多级 fallback 链**（本地 → 缓存 → 联网权威源 → AI）：
 
@@ -290,10 +291,13 @@ chem-check/
 ├── public/
 │   ├── index.html        # 网页界面（检验报告单/SDS 风）
 │   ├── styles.css        # 样式（含自托管字体 @font-face 与打印样式）
-│   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报 + URL 分享）
+│   ├── app.js            # 前端逻辑（判定 + 配平计算 + 上报 + URL 分享 + 结构式渲染）
 │   ├── chem-engine.js    # 化学式解析 + 存在性判定引擎 + 电极电势表 + 酸根检测 + 颜色表（浏览器/Worker 共用）
 │   ├── chem-calc.js      # 代数配平 + 摩尔质量 + 化学计量 + 元素质量分数（含 118 元素原子量）
+│   ├── chem-structure.js # 化学式→SMILES 结构辞典（180+ 物质）+ 同分异构体表 + 离子判定
 │   ├── chem-engine.test.mjs  # 引擎单元测试（42 用例）
+│   ├── chem-structure.test.mjs # 结构辞典单元测试（15 用例）
+│   ├── vendor/openchemlib.js   # 结构式渲染库（OpenChemLib 9.x ESM，离线自托管）
 │   └── fonts/            # 自托管 woff2（Fraunces + IBM Plex Sans/Mono，国内免翻字体加速）
 ├── src/
 │   ├── worker.js         # Worker：路由 + fallback 链 + AI 提示词 + API 网关(限流/key) + 结构化返回

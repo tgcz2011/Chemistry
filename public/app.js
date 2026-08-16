@@ -3,6 +3,7 @@
 // 配平·计算：调用 /api/equation，展示配平方程式、摩尔质量，并提供化学计量计算器
 import { analyze, prettyFormula, verdictText, TEMPLATES } from "/chem-engine.js";
 import { compositionMassPct, molarMass } from "/chem-calc.js";
+import { lookupStructures } from "/chem-structure.js";
 
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
@@ -23,7 +24,7 @@ const I18N = {
     note_body:'本地内置约 110 种常见与特殊物质（含注意事项），并用价键/氧化态规则即时推断其余。命中知识库毫秒即返；<strong>未收录的物质自动调用 Cloudflare Workers AI（Qwen3-30B）深度判定</strong>，给出名称、存在性与注意事项。方程式配平采用代数法（保证原子守恒），仅给反应物时先走本地规则、再由 AI 补全产物。规则与 AI 均为辅助判断，权威结论以实验与文献为准。',
     footer:"本地即时判定 · Workers AI 深度判定 · 代数配平与计量 · 教育用途，危险物质操作请遵循实验室规范",
     stamp:{ yes:"稳定存在", conditional:"特定条件", unstable:"极不稳定", no:"不存在", waiting:"待核实" },
-    sec_composition:"元素质量分数", sec_radical:"结构特征",
+    sec_composition:"元素质量分数", sec_radical:"结构特征", sec_structure:"结构式", struct_isomer:"同分异构体", struct_none:"暂无结构式数据（金属、离子晶格与复杂网络结构暂不支持）", struct_err:"结构渲染失败", struct_ionic:"离子化合物，由离子构成，无独立分子结构",
     sec_hazards:"危险信息", sec_colors:"颜色与形态", sec_redox:"氧化/还原性", sec_solubility:"溶解度", sec_electrode:"电极电势", sec_warnings:"安全提示",
     sec_notes:"说明与注意事项", sec_sources:"数据来源", sec_related:"相关物质",
     lbl_ion:"显色来源", lbl_none:"无",
@@ -53,7 +54,7 @@ const I18N = {
     note_body:'The local knowledge base covers ~110 common and special substances (with safety notes); the rest is inferred instantly via valence/oxidation-state rules. KB hits return in milliseconds; <strong>unknowns are sent to Cloudflare Workers AI (Qwen3-30B)</strong> for deep judgment — name, existence, and safety notes. Equation balancing uses the algebraic method (guarantees atom conservation); given only reactants, local rules predict products first, then AI. All rules and AI are advisory — authoritative conclusions come from experiments and literature.',
     footer:"Instant local · Workers AI deep · Algebraic balancing · For education — follow lab safety for hazardous substances",
     stamp:{ yes:"Exists", conditional:"Conditional", unstable:"Unstable", no:"Not found", waiting:"WAITING" },
-    sec_composition:"Element Mass Fraction", sec_radical:"Structural Feature",
+    sec_composition:"Element Mass Fraction", sec_radical:"Structural Feature", sec_structure:"Structure", struct_isomer:"Isomers", struct_none:"No structural data (metals, ionic lattices, network solids)", struct_err:"Render failed", struct_ionic:"Ionic compound — composed of ions, no discrete molecules",
     sec_hazards:"Hazards", sec_colors:"Color & Form", sec_redox:"Redox Properties", sec_solubility:"Solubility", sec_electrode:"Electrode Potential", sec_warnings:"Safety",
     sec_notes:"Notes & Precautions", sec_sources:"Sources", sec_related:"Related",
     lbl_ion:"Color source", lbl_none:"None",
@@ -122,6 +123,9 @@ $("#lang-toggle").addEventListener("click", toggleLang);
 $("#theme-toggle").addEventListener("click", toggleTheme);
 
 let lastCheckResult = null;
+let checkSeq = 0;
+let eqSeq = 0;
+let lastEq = null;
 
 // ────────────────────────── 模式切换 ──────────────────────────
 function switchMode(m){
@@ -154,28 +158,9 @@ function insertTemplate(t){
     val=val.slice(0,s)+t.ins+val.slice(e);
     const caret=s+t.ins.length; input.value=val; input.focus(); input.setSelectionRange(caret,caret);
   }
-updatePreview();
-
-// ────────────────────────── URL 参数初始化（?f= 判定 / ?e= 方程式）──────────────
-(function initFromUrl(){
-  try{
-    const p = new URLSearchParams(location.search);
-    const f = (p.get("f")||"").trim();
-    const e = (p.get("e")||"").trim();
-    if(e){
-      switchMode("eq");
-      eqInput.value = e;
-      condInput.value = p.get("cond") || "";
-      doEquation();
-    } else if(f){
-      switchMode("check");
-      input.value = f;
-      updatePreview();
-      doCheck();
-    }
-  }catch(err){}
-})();
+    updatePreview();
 }
+// ────────────────────────── 事件绑定 ──────────────────────────
 input.addEventListener("input", updatePreview);
 input.addEventListener("keydown",(e)=>{ if(e.key==="Enter") doCheck(); });
 $("#check").addEventListener("click", doCheck);
@@ -215,7 +200,6 @@ function copyLink(btn){
   }catch(e){}
 }
 
-let checkSeq = 0;
 async function doCheck(){
   const raw=input.value.trim();
   if(!raw){ resultBox.innerHTML=""; lastCheckResult=null; syncUrl(null); return; }
@@ -269,7 +253,6 @@ $("#eqgo").addEventListener("click", doEquation);
 eqInput.addEventListener("keydown",(e)=>{ if(e.key==="Enter") doEquation(); });
 $$(".chip.eq").forEach(c=>c.addEventListener("click",()=>{ eqInput.value=c.dataset.e; condInput.value=""; doEquation(); }));
 
-let eqSeq=0;
 async function doEquation(){
   const raw=eqInput.value.trim();
   if(!raw){ eqResult.innerHTML=""; syncUrl(null); return; }
@@ -301,6 +284,52 @@ const SRC_EN={
   "knowledge-base":"Local KB", "rule-fallback":"Valence rules (offline)",
   rule:"Valence rule"
 };
+
+// ────────────────────────── 结构式渲染（OpenChemLib）─────────────────────────
+let lastStructureData = null;
+let oclPromise = null;
+function loadOCL(){
+  if(window.OCL) return Promise.resolve(window.OCL);
+  if(!oclPromise) oclPromise = import("/vendor/openchemlib.js").then(m=>m.default).catch(e=>{ oclPromise=null; throw e; });
+  return oclPromise;
+}
+const SUP = {"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹"};
+function supIon(n){ return String(n).split("").map(c=>SUP[c]||c).join(""); }
+function prettyIon(smi){
+  return smi.split(".").map(frag=>{
+    let s = frag.replace(/^\[|\]$/g,"");
+    s = s.replace(/\+(\d*)$/, (m,d)=> (d?supIon(d):"")+"⁺");
+    s = s.replace(/-(\d*)$/, (m,d)=> (d?supIon(d):"")+"⁻");
+    return s;
+  }).join(" · ");
+}
+function drawStructGrid(gridEl, st){
+  loadOCL().then(OCL=>{
+    const boxes = Array.from(gridEl.querySelectorAll(".struct-svg"));
+    st.structures.forEach((s,i)=>{
+      const box = boxes[i];
+      if(!box || !box.isConnected) return;
+      box.innerHTML = "";
+      if(s.ionic){
+        box.innerHTML = `<div class="struct-ionic"><span class="ion-formula">${escapeHtml(prettyIon(s.smiles))}</span><span class="struct-ionic-note">${t("struct_ionic")}</span></div>`;
+        return;
+      }
+      try{
+        const mol = OCL.Molecule.fromSmiles(s.smiles);
+        const uid = "csvg" + (Math.random().toString(36).slice(2,8));
+        let svg = mol.toSVG(340, 240);
+        svg = svg.replace(/id="mol1"/g, `id="${uid}"`).replace(/#mol1/g, `#${uid}`);
+        box.innerHTML = svg;
+      }catch(e){
+        box.innerHTML = `<span class="struct-err">${t("struct_err")}</span>`;
+      }
+    });
+  }).catch(()=>{});
+}
+function refreshStructureSvgs(){
+  const grid = document.querySelector("#struct-grid");
+  if(grid && lastStructureData) drawStructGrid(grid, lastStructureData);
+}
 
 function renderReport(res, raw, opts={}){
   if(!res || res.ok===false){ resultBox.innerHTML=errHtml(res&&res.error?res.error:(lang==="cn"?"无法解析":"Cannot parse")); return; }
@@ -374,8 +403,23 @@ function renderReport(res, raw, opts={}){
   const reportHtml = (!opts.waiting && res.source && res.source!=="knowledge-base") ?
     `<div class="sec"><button class="chip" id="report-btn">${t("report_btn")}</button><span class="rep-hint" id="report-hint"></span></div>` : "";
 
+  // —— 结构式（SMILES 渲染）——
+  const structSt = (!opts.waiting) ? lookupStructures(res.normalized||raw) : null;
+  lastStructureData = structSt;
+  let structHtml = "";
+  if(structSt){
+    const cards = structSt.structures.map(s=>
+      `<figure class="struct-card"><div class="struct-svg" data-smiles="${escapeHtml(s.smiles)}"></div>`+
+      `<figcaption>${escapeHtml(bi(s.name))}${s.note?` <span class="struct-note">${escapeHtml(bi(s.note))}</span>`:""}</figcaption></figure>`).join("");
+    const isoTag = structSt.isomers ? `<span class="struct-tag">${t("struct_isomer")}</span>` : "";
+    structHtml = `<div class="sec struct-sec"><h4>${t("sec_structure")}${isoTag}</h4><div class="struct-grid" id="struct-grid">${cards}</div></div>`;
+  } else {
+    structHtml = `<div class="sec struct-sec"><h4>${t("sec_structure")}</h4><div class="struct-none">${t("struct_none")}</div></div>`;
+  }
+
   // verdict=no：只显示 stamp + 元素质量分数，隐藏其他所有区块
   const isNo = res.verdict==="no" && !opts.waiting;
+  if(isNo) lastStructureData = null;
 
   resultBox.innerHTML=`
     <article class="report">
@@ -389,6 +433,7 @@ function renderReport(res, raw, opts={}){
           <div class="stamp ${stampCls}">${stampText}</div>
         </div>
       </div>
+      ${isNo?"":structHtml}
       ${isNo?"":`<div class="meta">
         <span><b>${t("meta_composition")}</b> <span class="el">${elementsHtml||"—"}</span></span>
         ${massHtml}
@@ -414,11 +459,14 @@ function renderReport(res, raw, opts={}){
   if(repBtn) repBtn.addEventListener("click", ()=>doReport(raw, repBtn));
   const shareBtn = resultBox.querySelector("#share-btn");
   if(shareBtn) shareBtn.addEventListener("click", ()=>copyLink(shareBtn));
+  if(structSt){
+    const grid = resultBox.querySelector("#struct-grid");
+    if(grid) drawStructGrid(grid, structSt);
+  }
   resultBox.scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
 // ────────────────────────── 渲染：配平与计算 ──────────────────────────
-let lastEq=null;
 function renderEquation(j, raw){
   if(!j || j.ok===false){ eqResult.innerHTML=errHtml(j&&j.error?j.error:"无法处理该方程式"); return; }
   lastEq={ data:j, raw };
@@ -545,3 +593,24 @@ function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"
 function errHtml(msg){return `<div class="err"><b>出错了。</b><br/>${escapeHtml(msg)}</div>`;}
 
 updatePreview();
+
+// ────────────────────────── URL 参数初始化（?f= 判定 / ?e= 方程式）──────────────
+// 置于文件末尾，确保所有模块级 let/const 已初始化，避免 TDZ 错误
+(function initFromUrl(){
+  try{
+    const p = new URLSearchParams(location.search);
+    const f = (p.get("f")||"").trim();
+    const e = (p.get("e")||"").trim();
+    if(e){
+      switchMode("eq");
+      eqInput.value = e;
+      condInput.value = p.get("cond") || "";
+      doEquation();
+    } else if(f){
+      switchMode("check");
+      input.value = f;
+      updatePreview();
+      doCheck();
+    }
+  }catch(err){}
+})();

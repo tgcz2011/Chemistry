@@ -1,6 +1,6 @@
 {
   "name": "chem-check",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "化学式速查：输入化学式，毫秒级判断物质是否存在并给出注意事项。部署到 Cloudflare Worker（含静态资源）。",
