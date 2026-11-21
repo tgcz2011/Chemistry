@@ -518,11 +518,11 @@ function eqHeaderHTML(j){
 function eqBlockHTML(j, idx){
   const labelHtml = j.label?`<div class="sec"><h4>${escapeHtml(j.label)}</h4><div class="rep-eq small">${escapeHtml(j.equation)}</div>${j.note?`<div class="rep-sub">${escapeHtml(j.note)}</div>`:""}</div>`:"";
   const sideTag=(isLeft)=>isLeft?`<span class="sidetag">反应物</span>`:`<span class="sidetag p">生成物</span>`;
-  const colorDot=(s)=>{ if(s.colors&&s.colors.length){const c=s.colors[0];return `<span class="cdot" style="background:${c.hex}" title="${c.form}：${c.color}"></span>`;} return "";};
+  const colorDot=(s)=>{ if(s.colors&&s.colors.length){const c=s.colors[0];return `<span class="cdot" style="background:${c.hex}" title="${escapeHtml(bi(c.form))}：${escapeHtml(bi(c.color))}"></span>`;} return "";};
   const mkRow=(s,isLeft)=>`<tr><td class="f">${sideTag(isLeft)}${prettyFormula(s.formula)}${s.state||""}${colorDot(s)}</td>`+
     `<td class="num">${s.coeff}</td>`+
     `<td class="num">${s.molarMass!=null?s.molarMass.toFixed(2):"—"}</td>`+
-    `<td class="n">${s.name?escapeHtml(s.name):""}</td></tr>`;
+    `<td class="n">${escapeHtml(bi(s.name))}</td></tr>`;
   const tableRows = j.left.map(s=>mkRow(s,true)).join("") + j.right.map(s=>mkRow(s,false)).join("");
   const options=j.species.map((s,i)=>`<option value="${i}">${prettyFormula(s.formula)}</option>`).join("");
   return `<div class="vblock" id="vblock-${idx}">
