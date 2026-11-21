@@ -606,3 +606,15 @@ pre.code .hl{ color:var(--accent); }
   .chip, .btn, .rel{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   .stamp{ border-color:#333 !important; color:#333 !important; animation:none !important; }
 }
+
+/* SuperBoard 桌面嵌入：保留完整工具与主题，仅减少非工作区内容。 */
+[data-embed="true"] .wrap{max-width:1040px;padding:18px 24px 34px;}
+[data-embed="true"] .mast-link,
+[data-embed="true"] .hero .lede,
+[data-embed="true"] .note,
+[data-embed="true"] .foot{display:none;}
+[data-embed="true"] .hero{margin:20px 0 0;}
+[data-embed="true"] .hero h1{font-size:34px;margin-bottom:0;}
+[data-embed="true"] .hero h1 br{display:none;}
+[data-embed="true"] .modes{margin-top:20px;}
+[data-embed="true"] .panel{margin-top:18px;}

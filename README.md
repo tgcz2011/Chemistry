@@ -33,6 +33,7 @@
 - **数据可信处理**：中文名可信过滤（剔除维基“XX列表/索引”等误命中）、离子感知、AI 提示词携带 PubChem/Wiki 事实与“PubChem 未命中≠不存在”约束。
 - 界面为「化学检验报告单 / 安全数据表」编辑印刷风（判定章戳、SDS 编号分区、发丝线 + 颗粒噪点）。
 - 线上地址：`https://chem-check.zztool.dpdns.org`（备用 `https://chem-check.tgcz2011.workers.dev`）。
+- **SuperBoard 嵌入**：`https://chem-check.zztool.dpdns.org/?embed=1` 提供桌面大屏精简布局，隐藏 API/额度/控制台链接和说明性长文，保留物质判定、配平、化学计量、结构式、主题及双语全部功能。SuperBoard 通过 iframe 复用本应用与现有 API，不另写化学引擎。
 
 ---
 

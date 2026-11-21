@@ -69,6 +69,7 @@
 | 30 | **字体自托管** | 移除全部 Google Fonts 外部引用，5 个 latin 子集 woff2 本地托管于 `public/fonts/`（可变字体 Fraunces/Sans 单文件覆盖多字重），`@font-face` + `font-display:swap`，国内首屏加速 | `/fonts/*.woff2` |
 | 31 | **AI 判定去保守** | prompt 明确禁止 uncertain/maybe 模糊词 + 判定指引（PubChem 证实或电荷平衡→yes）；代码兜底：非枚举 verdict 时 PubChem 证实→yes，否则 conditional | `aiJudgeOnce` |
 | 32 | **结构式渲染（OpenChemLib）** | 判定结果直接画结构式：本地分子辞典 `chem-structure.js`（FORMULA_STRUCTURES 覆盖 KNOWNS 181/198，含手写 SMILES）+ **OpenChemLib@9.25.0** 本地渲染（`public/vendor/openchemlib.js`，自包含 ESM 1.1MB，默认导出 OCL）；**同分异构体全部画出**（ISOMER_STRUCTURES，如 C₂H₆O→乙醇+二甲醚，C₄H₁₀O→7 种）；水合物回退主成分；**纯离子化合物（如 NaCl/AgOH）渲染"离子组成"卡**（`Na⁺ · Cl⁻`）；键线配色随明暗主题自动切换 | 判定结果「结构式」区 |
+| 33 | **SuperBoard 桌面嵌入** | `?embed=1` 设置根元素 `data-embed`，CSS 隐藏外部导航与长说明、压缩留白；复用完整应用/API，不复制或改写判定、配平与结构式引擎 | SuperBoard `ChemPanel` iframe |
 
 ---
 

@@ -8,6 +8,11 @@ import { lookupStructures } from "/chem-structure.js";
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 
+// SuperBoard 通过 iframe 复用完整化学引擎；embed 仅精简布局，不改变任何计算逻辑。
+if(new URLSearchParams(location.search).get("embed")==="1"){
+  document.documentElement.dataset.embed="true";
+}
+
 // ────────────────────────── 主题 / 语言 ──────────────────────────
 const I18N = {
   cn:{
