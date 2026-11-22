@@ -37,9 +37,10 @@
     <p class="lede" data-i18n="lede">输入任意化学式即刻判定——命中知识库即返，未收录的交由云端 AI 深度判定。还能给方程式配平、算摩尔质量与化学计量。比如氢氧化银，只在特定条件下存在，空气中很快脱水成氧化银。</p>
   </section>
 
-  <div class="modes" role="tablist">
-    <button class="mode active" data-mode="check" role="tab" data-i18n="mode_check">物质判定</button>
-    <button class="mode" data-mode="eq" role="tab" data-i18n="mode_eq">配平 · 计算</button>
+  <div class="modes" role="tablist" aria-label="化学工具模式">
+    <button class="mode active" data-mode="check" role="tab" aria-selected="true" aria-controls="panel-check" data-i18n="mode_check">物质判定</button>
+    <button class="mode" data-mode="eq" role="tab" aria-selected="false" aria-controls="panel-eq" data-i18n="mode_eq">配平 · 计算</button>
+    <button class="mode" data-mode="redox" role="tab" aria-selected="false" aria-controls="panel-redox" data-i18n="mode_redox">氧化还原速查</button>
   </div>
 
   <!-- ── 判定模式 ── -->
@@ -92,6 +93,11 @@
     </div>
 
     <div id="eqresult"></div>
+  </section>
+
+  <!-- ── 氧化还原速查：静态资料，不调用 AI ── -->
+  <section id="panel-redox" class="panel hidden" aria-live="polite">
+    <div id="redox-reference" class="redox-reference"></div>
   </section>
 
   <section class="note">

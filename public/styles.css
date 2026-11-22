@@ -618,3 +618,31 @@ pre.code .hl{ color:var(--accent); }
 [data-embed="true"] .hero h1 br{display:none;}
 [data-embed="true"] .modes{margin-top:20px;}
 [data-embed="true"] .panel{margin-top:18px;}
+
+/* 氧化还原参考资料：保留检验报告风格，桌面宽表独立横向滚动。 */
+.redox-reference{margin-top:20px;background:var(--paper-2);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:5px 5px 0 rgba(34,31,24,.10);}
+.redox-intro{padding:18px 22px;border-bottom:1px solid var(--line);}
+.redox-intro h2{margin:0 0 7px;font:600 22px var(--serif);}
+.redox-intro p{margin:0;color:var(--ink-2);font-size:13px;}
+.redox-principles{margin:12px 0 0;padding-left:19px;color:var(--ink-2);font-size:13px;}
+.redox-principles li{margin:6px 0;}
+.redox-section{padding:16px 22px 20px;border-bottom:1px solid var(--line);}
+.redox-section h3{margin:0 0 12px;font:600 11px var(--mono);letter-spacing:1.6px;color:var(--accent);text-transform:uppercase;}
+.redox-table-wrap{overflow-x:auto;border:1px solid var(--line);}
+.redox-table{width:100%;border-collapse:collapse;font-size:12.5px;line-height:1.55;}
+.redox-table th{text-align:left;padding:8px 10px;background:var(--paper-inset);border-bottom:1px solid var(--line-strong);font:500 10px var(--mono);letter-spacing:.7px;color:var(--ink-3);white-space:nowrap;}
+.redox-table td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);}
+.redox-table tr:last-child td{border-bottom:none;}
+.redox-table .species{font-family:var(--mono);font-weight:600;color:var(--ink);white-space:nowrap;}
+.redox-table .condition{font-size:11.5px;color:var(--accent);min-width:120px;}
+.redox-table .change{min-width:210px;color:var(--ink);font-weight:500;}
+.redox-table .note{min-width:250px;font-size:12px;}
+.redox-table .pair{font-family:var(--mono);color:var(--indigo);white-space:nowrap;}
+.redox-table .reaction{font-family:var(--mono);white-space:nowrap;font-size:12px;}
+.redox-table .potential{font-family:var(--mono);font-weight:600;color:var(--accent);white-space:nowrap;text-align:right;font-size:14px;}
+.redox-table .direction{font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.redox-sources{display:flex;flex-wrap:wrap;gap:7px 16px;}
+.redox-sources a{color:var(--indigo);font-size:11px;text-decoration:none;border-bottom:1px solid var(--line);}
+.redox-sources a:hover{color:var(--accent);border-color:var(--accent);}
+[data-embed="true"] .redox-reference{margin-top:16px;}
+@media print{.redox-table-wrap{overflow:visible}.redox-table{font-size:10px}.redox-reference{box-shadow:none}.redox-section{break-inside:auto}.redox-table tr{break-inside:avoid}}

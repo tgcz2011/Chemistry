@@ -4,6 +4,7 @@
 import { analyze, prettyFormula, verdictText, TEMPLATES } from "/chem-engine.js";
 import { compositionMassPct, molarMass } from "/chem-calc.js";
 import { lookupStructures } from "/chem-structure.js";
+import { REDOX_REAGENTS, REDUCTION_POTENTIALS, REDOX_GUIDE } from "/redox-data.js";
 
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
@@ -21,7 +22,7 @@ const I18N = {
     eyebrow:"存在性判定 · 方程式配平 · 化学计量",
     title:"这个化学式，<br/>到底存不存在？",
     lede:"输入任意化学式即刻判定——命中知识库即返，未收录的交由云端 AI 深度判定。还能给方程式配平、算摩尔质量与化学计量。比如氢氧化银，只在特定条件下存在，空气中很快脱水成氧化银。",
-    mode_check:"物质判定", mode_eq:"配平 · 计算",
+    mode_check:"物质判定", mode_eq:"配平 · 计算", mode_redox:"氧化还原速查",
     label_formula:"化学式", label_eq:"反应物或完整方程式",
     label_cond:"反应条件（可留空，默认 Null）",
     btn_check:"判定", btn_eq:"配平", try:"试试",
@@ -51,7 +52,7 @@ const I18N = {
     eyebrow:"Existence · Balancing · Stoichiometry",
     title:"Does this formula<br/>really exist?",
     lede:"Type any chemical formula for instant judgment — knowledge-base hits return immediately, unknowns go to cloud AI for deep analysis. Also balances equations, computes molar mass and stoichiometry. e.g. AgOH only exists transiently, dehydrating to Ag₂O in air.",
-    mode_check:"Substance", mode_eq:"Balance · Calc",
+    mode_check:"Substance", mode_eq:"Balance · Calc", mode_redox:"Redox Reference",
     label_formula:"Formula", label_eq:"Reactants or full equation",
     label_cond:"Conditions (optional, default None)",
     btn_check:"Check", btn_eq:"Balance", try:"Try",
@@ -104,6 +105,7 @@ function toggleLang(){
   lang = lang==="cn"?"en":"cn";
   localStorage.setItem("chem_lang", lang);
   applyLang();
+  renderRedoxReference();
   // re-render current result if exists
   if(lastCheckResult) renderReport(lastCheckResult.data, lastCheckResult.raw, { deep:false, refined:lastCheckResult.refined });
   if(lastEq) renderEquation(lastEq.data, lastEq.raw);
@@ -134,11 +136,49 @@ let lastEq = null;
 
 // ────────────────────────── 模式切换 ──────────────────────────
 function switchMode(m){
-  $$(".mode").forEach(b=>b.classList.toggle("active", b.dataset.mode===m));
+  $$(".mode").forEach(b=>{
+    const active=b.dataset.mode===m;
+    b.classList.toggle("active",active);
+    b.setAttribute("aria-selected",String(active));
+  });
   $("#panel-check").classList.toggle("hidden", m!=="check");
   $("#panel-eq").classList.toggle("hidden", m!=="eq");
+  $("#panel-redox").classList.toggle("hidden", m!=="redox");
 }
 $$(".mode").forEach(btn=>{ btn.addEventListener("click",()=>switchMode(btn.dataset.mode)); });
+
+// 静态参考资料与判定/配平共用双语切换，但不消耗 AI 或联网查询额度。
+function renderRedoxReference(){
+  const box=$("#redox-reference");
+  if(!box) return;
+  const en=lang==="en";
+  const esc=escapeHtml;
+  const text=(v)=>esc(bi(v));
+  const reagentRows=(kind)=>REDOX_REAGENTS.filter(r=>r.kind===kind).map(r=>
+    `<tr><td class="species">${esc(r.species)}</td><td class="condition">${text(r.condition)}</td>`+
+    `<td class="change">${text(r.change)}</td><td class="note">${text(r.note)}</td></tr>`).join("");
+  const reagentTable=(kind)=>`<div class="redox-table-wrap"><table class="redox-table"><thead><tr>`+
+    `<th>${en?"Species":"物质"}</th><th>${en?"Conditions":"条件"}</th><th>${en?"Common change":"常见转化"}</th><th>${en?"Boundary / caution":"条件边界与注意"}</th>`+
+    `</tr></thead><tbody>${reagentRows(kind)}</tbody></table></div>`;
+  const potentials=REDUCTION_POTENTIALS.map(r=>{
+    const e0=(r.potential>0?"+":"")+String(r.potential);
+    return `<tr><td class="pair">${esc(r.pair)}</td><td class="reaction">${esc(r.reaction)}</td>`+
+      `<td class="condition">${text(r.condition)}</td><td class="potential">${e0} V</td>`+
+      `<td class="direction">${en?"Left: oxidant · right: reductant":"左：氧化型 · 右：还原型"}</td></tr>`;
+  }).join("");
+  box.innerHTML=`
+    <div class="redox-intro">
+      <h2>${en?"Redox: conditions before strength":"氧化还原：先看条件，再比强弱"}</h2>
+      <p>${en?"Common products below are typical rather than unique. Potentials are standard reduction potentials at 25 °C, relative to the standard hydrogen electrode.":"下列产物均为特定条件下的常见结果，并非唯一产物。电势为 25 °C、标准状态下相对标准氢电极的标准还原电势。"}</p>
+      <ol class="redox-principles">${REDOX_GUIDE.principles.map(p=>`<li>${text(p)}</li>`).join("")}</ol>
+    </div>
+    <section class="redox-section"><h3>${en?"01 · Common oxidants and conditional products":"01 · 常见氧化剂与条件产物"}</h3>${reagentTable("oxidant")}</section>
+    <section class="redox-section"><h3>${en?"02 · Common reductants and conditional products":"02 · 常见还原剂与条件产物"}</h3>${reagentTable("reductant")}</section>
+    <section class="redox-section"><h3>${en?"03 · Standard reduction potentials · descending E°":"03 · 标准还原电势 · 按 E° 从高到低"}</h3>
+      <div class="redox-table-wrap"><table class="redox-table"><thead><tr><th>${en?"Redox pair":"氧化还原电对"}</th><th>${en?"Reduction half-reaction":"还原半反应"}</th><th>${en?"Condition":"条件"}</th><th>E°</th><th>${en?"How to read":"判读"}</th></tr></thead><tbody>${potentials}</tbody></table></div>
+    </section>
+    <section class="redox-section"><h3>${en?"Sources":"数据来源"}</h3><div class="redox-sources">${REDOX_GUIDE.sources.map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.label)} ↗</a>`).join("")}</div></section>`;
+}
 
 // ────────────────────────── 判定模式 ──────────────────────────
 const input = $("#formula");
@@ -598,6 +638,7 @@ function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"
 function errHtml(msg){return `<div class="err"><b>出错了。</b><br/>${escapeHtml(msg)}</div>`;}
 
 updatePreview();
+renderRedoxReference();
 
 // ────────────────────────── URL 参数初始化（?f= 判定 / ?e= 方程式）──────────────
 // 置于文件末尾，确保所有模块级 let/const 已初始化，避免 TDZ 错误
